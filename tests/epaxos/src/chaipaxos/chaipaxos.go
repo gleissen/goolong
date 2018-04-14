@@ -16,8 +16,8 @@ import (
 const CHAN_BUFFER_SIZE = 200000
 const TRUE = uint8(1)
 const FALSE = uint8(0)
-
 const MAX_BATCH = 5000
+const TIMEOUT = 20 //ms
 
 type Replica struct {
 	*genericsmr.Replica // extends a generic Paxos replica
@@ -431,10 +431,14 @@ func (r *Replica) handlePropose(propose *genericsmr.Propose) {
 		sent++
 		dlog.Printf("Leader: Sending prepare request for instance %v", instNo)
 		r.SendMsg(q, r.prepareRPC, args)
-		prepareReplyS := <-r.prepareReplyChan
-		prepareReply := prepareReplyS.(*paxosproto.PrepareReply)
-		dlog.Printf("Leader: Received prepare reply from %v", prepareReply.Instance)
-		r.handlePrepareReply(prepareReply)
+		select {
+		case prepareReplyS := <-r.prepareReplyChan:
+			prepareReply := prepareReplyS.(*paxosproto.PrepareReply)
+			dlog.Printf("Leader: Received prepare reply from %v", prepareReply.Instance)
+			r.handlePrepareReply(prepareReply)
+		case <-time.After(TIMEOUT * time.Millisecond):
+			dlog.Printf("Leader: Timeout for receive for instance %v", instNo)
+		}
 	}
 }
 
