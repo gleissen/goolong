@@ -20,6 +20,7 @@ func main() {
 func runClientProtocol() {
 	n := gochai.CreateNewNode(1, ":7071", []string{":7070"})
 	fmt.Println("Acting as client.")
+	fmt.Println("Sending 42 to server.")
 	n.Send(0, 42)
 }
 

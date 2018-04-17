@@ -6,58 +6,77 @@ import "go/ast"
 import "fmt"
 import "log"
 
-func main() {
-	parse_call_sites()
+type IceTVisitor struct {
+	IceTTerm string
 }
 
-func parse_call_sites() {
+func main() {
+	walkAst()
+}
+
+func makeNewIceTVisitor() *IceTVisitor {
+	v := &IceTVisitor{"skip"}
+	return v
+}
+
+func walkAst() {
 	// parsing file
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "../tests/test.go", nil, parser.ParseComments)
+	node, err := parser.ParseFile(fset, "../pingpong/pingpong.go", nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// extracting call sites
-	ast.Inspect(node, func(n ast.Node) bool {
-		// Find Call sites
-		site, ok := n.(*ast.CallExpr)
+	v := makeNewIceTVisitor()
+	ast.Walk(v, node)
+	fmt.Printf("Returned IceTTerm: %v\n", v.IceTTerm)
+}
+
+func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
+	switch node.(type) {
+	case *ast.CallExpr:
+		sendStr, ok := parseSend(node.(*ast.CallExpr))
 		if ok {
-			fmt.Print(parse_send(site))
-			fmt.Print(parse_recv(site))
+			v.IceTTerm = fmt.Sprintf("%v;%v", sendStr, v.IceTTerm)
 		}
-		return true
-	})
+	case *ast.AssignStmt:
+		recvString, ok := parseRecv(node.(*ast.AssignStmt))
+		if ok {
+			v.IceTTerm = fmt.Sprintf("%v;%v", recvString, v.IceTTerm)
+		}
+
+	}
+	return v
 }
 
 //fmt.Sprintf("at %v, %s", e.When, e.What)
-func parse_send(site *ast.CallExpr) string {
+func parseSend(site *ast.CallExpr) (string, bool) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
-		x := sel.X.(*ast.Ident)
-		if sel.Sel.Name == "Send" && x.Name == "gochai" {
+		if sel.Sel.Name == "Send" {
 			arg1 := site.Args[0].(*ast.BasicLit).Value
 			arg2 := site.Args[1].(*ast.BasicLit).Value
-			return fmt.Sprintf("send(%v, %v)\n", arg1, arg2)
-		} else {
-			return ""
+			return fmt.Sprintf("send(%v, %v)", arg1, arg2), true
 		}
-	} else {
-		return ""
 	}
+	return "", false
 }
 
-func parse_recv(site *ast.CallExpr) string {
-	sel, ok := site.Fun.(*ast.SelectorExpr)
-	if ok {
-		x := sel.X.(*ast.Ident)
-		if sel.Sel.Name == "Recv" && x.Name == "gochai" {
-			arg1 := site.Args[0].(*ast.BasicLit).Value
-			arg2 := site.Args[1].(*ast.BasicLit).Value
-			return fmt.Sprintf("recv(%v, %v)\n", arg1, arg2)
-		} else {
-			return ""
+func parseRecv(assign *ast.AssignStmt) (string, bool) {
+	if len(assign.Rhs) == 1 {
+		site, ok := assign.Rhs[0].(*ast.CallExpr)
+		if ok {
+			sel, ok := site.Fun.(*ast.SelectorExpr)
+			if ok {
+				x, ok := sel.X.(*ast.Ident)
+				if ok {
+					if sel.Sel.Name == "Recv" && x.Name == "gochai" {
+						arg1 := assign.Lhs[0].(*ast.Ident).Name
+						return fmt.Sprintf("recv(%v)", arg1), true
+					}
+				}
+			}
 		}
-	} else {
-		return ""
 	}
+	return "", false
+
 }
