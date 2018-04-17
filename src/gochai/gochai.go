@@ -1,20 +1,29 @@
 package gochai
 
 import "fmt"
+import "node"
 
-// sending a value
-func Send(addr int, msg int) {
-	fmt.Printf("send %v to %v\n", addr, msg)
+func CreateNewNode(id int, myaddr string, peerAddrList []string) *node.Node {
+	n := node.MakeNode(id, myaddr, peerAddrList)
+	n.Run()
+	<-n.Connected
+	return n
 }
 
-// receiving a value
-func Recv(addr int, msg int) {
-	fmt.Printf("recv %v from %v\n", addr, msg)
+// Send sends msg to id
+func Send(id int, msg int32, n *node.Node) {
+	fmt.Printf("sending %v to %v\n", id, msg)
+	n.Send(id, msg)
+}
+
+// Recv blocks until a message is received and then return the receive value
+func Recv(n *node.Node) int32 {
+	msg := <-n.MsgChan
+	fmt.Printf("received %v \n", msg)
+	return msg
 }
 
 // TODO
 func Broadcast(addr []int, msg int) {
 	//TODO
-	fmt.Printf("send %v to %v\n", addr, msg)
-
 }

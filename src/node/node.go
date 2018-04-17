@@ -11,15 +11,16 @@ import "io"
 const CHAN_BUFFER_SIZE = 200000
 
 type Node struct {
-	Id       int
-	N        int      // number of connections
-	AddrList []string // array with the IP:port addresses
-	MyAddr   string
-	Peers    []net.Conn // cache of connections to all other nodes
-	Listener net.Listener
-	Readers  []*bufio.Reader
-	Writers  []*bufio.Writer
-	MsgChan  chan int32
+	Id        int
+	N         int      // number of connections
+	AddrList  []string // array with the IP:port addresses
+	MyAddr    string
+	Peers     []net.Conn // cache of connections to all other nodes
+	Listener  net.Listener
+	Readers   []*bufio.Reader
+	Writers   []*bufio.Writer
+	MsgChan   chan int32
+	Connected chan bool
 }
 
 func MakeNode(id int, myaddr string, peerAddrList []string) *Node {
@@ -32,11 +33,12 @@ func MakeNode(id int, myaddr string, peerAddrList []string) *Node {
 		nil,
 		make([]*bufio.Reader, len(peerAddrList)),
 		make([]*bufio.Writer, len(peerAddrList)),
-		make(chan int32, CHAN_BUFFER_SIZE)}
+		make(chan int32, CHAN_BUFFER_SIZE),
+		make(chan bool, 1)}
 	return n
 }
 
-func (n *Node) Connect(connected chan bool) {
+func (n *Node) Connect() {
 	done := make(chan bool)
 	var b [4]byte
 	bs := b[:4]
@@ -61,7 +63,7 @@ func (n *Node) Connect(connected chan bool) {
 	}
 	<-done
 	log.Printf("Replica id: %d. Done connecting.\n", n.Id)
-	connected <- true
+	n.Connected <- true
 	// listen for messages from each peer node
 	for rid, reader := range n.Readers {
 		go n.msgListener(rid, reader)
@@ -115,6 +117,6 @@ func (n *Node) Send(id int, msg int32) {
 	w.Flush()
 }
 
-func (n *Node) Run(connected chan bool) {
-	n.Connect(connected)
+func (n *Node) Run() {
+	n.Connect()
 }
