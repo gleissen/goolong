@@ -12,6 +12,9 @@ func Recv(addr int, msg int) {
 	fmt.Printf("recv %v from %v\n", addr, msg)
 }
 
-func Broadcast(addrs []int, msg int){
-	
+// TODO
+func Broadcast(addr []int, msg int) {
+	//TODO
+	fmt.Printf("send %v to %v\n", addr, msg)
+
 }

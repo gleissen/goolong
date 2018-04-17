@@ -228,13 +228,6 @@ func (r *Replica) run() {
 			r.handleCommitShort(commit)
 			break
 
-			//case prepareReplyS := <-r.prepareReplyChan:
-			//	prepareReply := prepareReplyS.(*paxosproto.PrepareReply)
-			//got a Prepare reply
-			//dlog.Printf("Received PrepareReply for instance %d\n", prepareReply.Instance)
-			//r.handlePrepareReply(prepareReply)
-			//break
-
 		case acceptReplyS := <-r.acceptReplyChan:
 			acceptReply := acceptReplyS.(*paxosproto.AcceptReply)
 			//got an Accept reply
@@ -253,37 +246,6 @@ func (r *Replica) updateCommittedUpTo() {
 	for r.instanceSpace[r.committedUpTo+1] != nil &&
 		r.instanceSpace[r.committedUpTo+1].status == COMMITTED {
 		r.committedUpTo++
-	}
-}
-
-func (r *Replica) bcastPrepare(instance int32, ballot int32, toInfinity bool) {
-	defer func() {
-		if err := recover(); err != nil {
-			log.Println("Prepare bcast failed:", err)
-		}
-	}()
-	ti := FALSE
-	if toInfinity {
-		ti = TRUE
-	}
-	args := &paxosproto.Prepare{r.Id, instance, ballot, ti}
-
-	n := r.N - 1
-	if r.Thrifty {
-		n = r.N >> 1
-	}
-	q := r.Id
-
-	for sent := 0; sent < n; {
-		q = (q + 1) % int32(r.N)
-		if q == r.Id {
-			break
-		}
-		if !r.Alive[q] {
-			continue
-		}
-		sent++
-		r.SendMsg(q, r.prepareRPC, args)
 	}
 }
 
@@ -604,7 +566,31 @@ func (r *Replica) handlePrepareReply(preply *paxosproto.PrepareReply) {
 			}
 			r.recordInstanceMetadata(r.instanceSpace[preply.Instance])
 			r.sync()
-			r.bcastAccept(preply.Instance, inst.ballot, inst.cmds)
+			//r.bcastAccept(preply.Instance, inst.ballot, inst.cmds)
+			pa.LeaderId = r.Id
+			pa.Instance = instance
+			pa.Ballot = ballot
+			pa.Command = command
+			args := &pa
+			//args := &paxosproto.Accept{r.Id, instance, ballot, command}
+
+			n := r.N - 1
+			if r.Thrifty {
+				n = r.N >> 1
+			}
+			q := r.Id
+
+			for sent := 0; sent < n; {
+				q = (q + 1) % int32(r.N)
+				if q == r.Id {
+					break
+				}
+				if !r.Alive[q] {
+					continue
+				}
+				sent++
+				r.SendMsg(q, r.acceptRPC, args)
+			}
 		}
 	} else {
 		// TODO: there is probably another active leader
