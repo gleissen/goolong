@@ -13,11 +13,7 @@ type IceTVisitor struct {
 	currentProcId   string
 	currentProgram  *icetTerm.Program
 	currentProccess *icetTerm.Process
-	outPutString    string
-}
-
-func main() {
-	walkAst()
+	IceTTerm        string
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -29,11 +25,13 @@ func (v *IceTVisitor) PrettyPrint() string {
 	return out
 }
 
-/*
-func (v *IceTVisitor) buildIceTTerm() string {
-	//return v.IceTTerm
+func (v *IceTVisitor) MakeIceTTerm() string {
+	v.currentProgram.AddProc(*v.currentProccess)
+	v.IceTTerm = v.currentProgram.PrintIceT()
+	v.currentProgram.RemoveLastProc()
+	return v.IceTTerm
 }
-*/
+
 func makeNewIceTVisitor() *IceTVisitor {
 
 	v := &IceTVisitor{"-1",
@@ -43,7 +41,7 @@ func makeNewIceTVisitor() *IceTVisitor {
 	return v
 }
 
-func walkAst() {
+func main() {
 	// parsing file
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "../pingpong/pingpong.go", nil, parser.ParseComments)
@@ -52,8 +50,7 @@ func walkAst() {
 	}
 	v := makeNewIceTVisitor()
 	ast.Walk(v, node)
-	fmt.Println(v.PrettyPrint())
-	//fmt.Printf("Returned IceT term: %v\n", v.IceTTerm)
+	fmt.Printf("proccess: %v\n icet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
 }
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
@@ -62,7 +59,6 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		// Send
 		sendStmt, ok := parseSend(node.(*ast.CallExpr), v.currentProcId)
 		if ok {
-
 			v.currentProccess.AddStmt(sendStmt)
 		} else {
 			// New Node
