@@ -12,10 +12,12 @@ const CHAN_BUFFER_SIZE = 200000
 
 type Node struct {
 	Id        int
-	N         int      // number of connections
+	N         int // number of connections
+	IsServer  bool
 	AddrList  []string // array with the IP:port addresses
 	MyAddr    string
 	Peers     []net.Conn // cache of connections to all other nodes
+	PeerIds   []int
 	Listener  net.Listener
 	Readers   []*bufio.Reader
 	Writers   []*bufio.Writer
@@ -23,45 +25,61 @@ type Node struct {
 	Connected chan bool
 }
 
-func MakeNode(id int, myaddr string, peerAddrList []string) *Node {
+func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node {
+	N := len(peerAddrList)
+	peerIds := makePeerIds(N)
 	n := &Node{
 		id,
-		len(peerAddrList),
+		N,
+		isServer,
 		peerAddrList,
 		myaddr,
-		make([]net.Conn, len(peerAddrList)),
+		make([]net.Conn, N),
+		peerIds,
 		nil,
-		make([]*bufio.Reader, len(peerAddrList)),
-		make([]*bufio.Writer, len(peerAddrList)),
+		make([]*bufio.Reader, N),
+		make([]*bufio.Writer, N),
 		make(chan int32, CHAN_BUFFER_SIZE),
 		make(chan bool, 1)}
 	return n
 }
 
-func (n *Node) Connect() {
-	done := make(chan bool)
-	var b [4]byte
-	bs := b[:4]
-	go n.waitForConnections(done)
-	//connect to peers
-	for i := 0; i < n.N; i++ {
-		for done := false; !done; {
-			if conn, err := net.Dial("tcp", n.AddrList[i]); err == nil {
-				n.Peers[i] = conn
-				done = true
-			} else {
-				time.Sleep(1e9)
-			}
-		}
-		binary.LittleEndian.PutUint32(bs, uint32(n.Id))
-		if _, err := n.Peers[i].Write(bs); err != nil {
-			fmt.Println("Write id error:", err)
-			continue
-		}
-		n.Readers[i] = bufio.NewReader(n.Peers[i])
-		n.Writers[i] = bufio.NewWriter(n.Peers[i])
+func makePeerIds(N int) []int {
+	ids := make([]int, N)
+	for i := range ids {
+		ids[i] = i
 	}
-	<-done
+	return ids
+}
+
+// Connect to peers
+func (n *Node) Connect() {
+	//done := make(chan bool)
+	if !n.IsServer {
+		n.waitForConnections() //(done)
+	} else {
+		var b [4]byte
+		bs := b[:4]
+		//connect to peers
+		for i := 0; i < n.N; i++ {
+			for done := false; !done; {
+				if conn, err := net.Dial("tcp", n.AddrList[i]); err == nil {
+					n.Peers[i] = conn
+					done = true
+				} else {
+					time.Sleep(1e9)
+				}
+			}
+			binary.LittleEndian.PutUint32(bs, uint32(n.Id))
+			if _, err := n.Peers[i].Write(bs); err != nil {
+				fmt.Println("Write id error:", err)
+				continue
+			}
+			n.Readers[i] = bufio.NewReader(n.Peers[i])
+			n.Writers[i] = bufio.NewWriter(n.Peers[i])
+		}
+	}
+	//<-done
 	log.Printf("Replica id: %d. Done connecting.\n", n.Id)
 	n.Connected <- true
 	// listen for messages from each peer node
@@ -71,30 +89,29 @@ func (n *Node) Connect() {
 }
 
 /* Connection dispatcher */
-func (n *Node) waitForConnections(done chan bool) {
+func (n *Node) waitForConnections() { //done chan bool) {
 	var b [4]byte
 	bs := b[:4]
-	fmt.Printf("waiting for connections at address %v\n", n.MyAddr)
+	fmt.Printf("waiting for peer connections at address %v\n", n.MyAddr)
 	n.Listener, _ = net.Listen("tcp", n.MyAddr)
 	for i := 0; i < n.N; i++ {
-		fmt.Printf("waiting for connections from %v\n", i)
 		conn, err := n.Listener.Accept()
-		fmt.Printf("established\n")
+		fmt.Printf("connection from %vth peer \n", i)
 		if err != nil {
 			fmt.Println("Accept error:", err)
 			continue
 		}
 		if _, err := io.ReadFull(conn, bs); err != nil {
-			fmt.Println("Connection establish error:", err)
+			fmt.Println("Connection error:", err)
 			continue
 		}
 		id := int32(binary.LittleEndian.Uint32(bs))
-		fmt.Println("Connection establish for replica:", id)
+		fmt.Println("Connection established for replica:", id)
 		n.Peers[i] = conn
 		n.Readers[i] = bufio.NewReader(conn)
 		n.Writers[i] = bufio.NewWriter(conn)
 	}
-	done <- true
+	//done <- true
 	fmt.Printf("Replica id: %d. Done connecting to peers\n", n.Id)
 }
 

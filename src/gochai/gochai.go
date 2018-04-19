@@ -3,8 +3,8 @@ package gochai
 import "fmt"
 import "node"
 
-func CreateNewNode(id int, myaddr string, peerAddrList []string) *node.Node {
-	n := node.MakeNode(id, myaddr, peerAddrList)
+func CreateNewNode(id int, myaddr string, peerAddrList []string, isServer bool) *node.Node {
+	n := node.MakeNode(id, myaddr, peerAddrList, isServer)
 	n.Run()
 	<-n.Connected
 	return n
