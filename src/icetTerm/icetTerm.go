@@ -34,10 +34,11 @@ type Recv struct {
 }
 
 type ForLoop struct {
-	ProcID  string
-	LoopVar string
-	Set     string
-	Stmts   Process
+	ProcID    string
+	LoopVar   string
+	Set       string
+	Invariant string
+	Stmts     Process
 }
 
 type SymSet struct {
@@ -52,7 +53,7 @@ func (s *Send) PrettyPrint() string {
 }
 
 func (s *Send) PrintIceT() string {
-	return fmt.Sprintf("send(%v, %v, %v)", s.ProcID, s.RecipientID, s.Value)
+	return fmt.Sprintf("send(%v, e_pid(%v), %v)", s.ProcID, s.RecipientID, s.Value)
 }
 
 // Receive statements
@@ -67,12 +68,12 @@ func (r *Recv) PrintIceT() string {
 // For Loops
 
 func (l *ForLoop) PrettyPrint() string {
-	return fmt.Sprintf("%v: for %v in %v do %v end", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
+	return fmt.Sprintf("invariant: %v\n%v: for %v in %v do %v end", l.Invariant, l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
 }
 
 func (l *ForLoop) PrintIceT() string {
 	//TODO stub
-	return fmt.Sprintf("for(%v, %v, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrintIceT())
+	return fmt.Sprintf("for(%v, %v, %v, done, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
 }
 
 func (s *SymSet) PrintIceT() string {
@@ -127,7 +128,7 @@ func (p *Program) PrintIceT() string {
 	} else {
 		prog = SKIP
 	}
-	return prog
+	return fmt.Sprintf("prog(prog,[], false, %v)", prog)
 }
 
 // Processes

@@ -7,7 +7,13 @@ import (
 	"go/token"
 	"icetTerm"
 	"log"
+	"strings"
 )
+
+const COMMENT_SIZE = 5
+const ANNOTATION_START = "{-@"
+const ANNOTATION_END = "-@}"
+const INVARIANT_TYPE = "invariant:"
 
 type IceTVisitor struct {
 	currentProcId   string
@@ -15,6 +21,7 @@ type IceTVisitor struct {
 	currentProccess *icetTerm.Process
 	currentSet      string
 	IceTTerm        string
+	Comments        ast.CommentMap
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -33,13 +40,14 @@ func (v *IceTVisitor) MakeIceTTerm() string {
 	return v.IceTTerm
 }
 
-func makeNewIceTVisitor() *IceTVisitor {
+func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
 
 	v := &IceTVisitor{"",
 		icetTerm.NewProgram(),
 		icetTerm.NewProcess(),
 		"",
-		""}
+		"",
+		comments}
 	return v
 }
 
@@ -47,13 +55,14 @@ func main() {
 	// parsing file
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, "../forloop/forloop.go", nil, parser.ParseComments)
-	//node, err := parser.ParseFile(fset, "../pingpong/pingpong.go", nil, parser.ParseComments)
+	comments := ast.NewCommentMap(fset, node, node.Comments)
 	if err != nil {
 		log.Fatal(err)
 	}
-	v := makeNewIceTVisitor()
+	v := makeNewIceTVisitor(comments)
 	ast.Walk(v, node)
-	fmt.Printf("proccess: %v\n icet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
+	//fmt.Printf("proccess: %v\n icet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
+	fmt.Printf("icet-t: %v\n", v.MakeIceTTerm())
 }
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
@@ -79,12 +88,11 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		// Recveive
 		recvStmt, ok := parseRecv(node.(*ast.AssignStmt), v.currentProcId)
 		if ok {
-			fmt.Printf("parsing receive with proc: %v and internal proc: %v\n", v.currentProcId, recvStmt.ProcID)
 			v.currentProccess.AddStmt(recvStmt)
 		}
 	case *ast.RangeStmt:
 		// For loop
-		LoopStmt, ok := parseForLoop(node.(*ast.RangeStmt), v.currentProcId)
+		LoopStmt, ok := parseForLoop(node.(*ast.RangeStmt), v.currentProcId, v.Comments)
 		if ok {
 			v.currentProccess.AddStmt(LoopStmt)
 		}
@@ -92,11 +100,15 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		return nil
 	case *ast.FuncDecl:
 		// symmetric set
-		set, ok := parseSymSetDecl(node.(*ast.FuncDecl))
+		set, ok := parseSymSetDecl(node.(*ast.FuncDecl), v.Comments)
 		if ok {
 			v.currentProgram.AddProc(set)
 			return nil
 		}
+		// case *ast.CommentGroup:
+		// 	c := node.(*ast.CommentGroup)
+		// 	fmt.Printf("found comment %v\n", c.Text())
+		// 	v.Comments = append(v.Comments, *c)
 	}
 	return v
 }
@@ -135,14 +147,40 @@ func parseNewNode(site *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-func parseForLoop(loopTerm *ast.RangeStmt, proc string) (*icetTerm.ForLoop, bool) {
+func parseComment(comment *ast.CommentGroup) string {
+	s := comment.Text()
+	s = strings.Trim(s, "\n")
+	if strings.HasPrefix(s, ANNOTATION_START) && strings.HasSuffix(s, ANNOTATION_END) {
+		s = strings.TrimPrefix(s, ANNOTATION_START)
+		s = strings.TrimSuffix(s, ANNOTATION_END)
+		s = strings.TrimSpace(s)
+		if strings.HasPrefix(s, INVARIANT_TYPE) {
+			s = strings.TrimPrefix(s, INVARIANT_TYPE)
+		}
+		return strings.TrimSpace(s)
+	}
+	return ""
+}
+
+func parseComments(comments []*ast.CommentGroup) string {
+	invariant := ""
+	for _, comment := range comments {
+		invariant = invariant + parseComment(comment)
+	}
+	return invariant
+}
+
+func parseForLoop(loopTerm *ast.RangeStmt, proc string, comments ast.CommentMap) (*icetTerm.ForLoop, bool) {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
+		loopComments := comments.Filter(loopTerm.Body)
+		invariant := parseComments(loopComments.Comments())
 		loopVar := loopTerm.Key.(*ast.Ident).Name
-		lv := makeNewIceTVisitor()
+		loopVar = strings.ToUpper(loopVar)
+		lv := makeNewIceTVisitor(comments)
 		lv.currentProcId = proc
 		ast.Walk(lv, loopTerm.Body)
-		return &icetTerm.ForLoop{ProcID: proc, LoopVar: loopVar, Set: "clients", Stmts: *lv.currentProccess}, true
+		return &icetTerm.ForLoop{ProcID: proc, LoopVar: loopVar, Set: "clients", Invariant: invariant, Stmts: *lv.currentProccess}, true
 	}
 	return nil, false
 }
@@ -159,7 +197,7 @@ func parseSend(site *ast.CallExpr, proc string) (*icetTerm.Send, bool) {
 	return nil, false
 }
 
-func parseSymSetDecl(decl *ast.FuncDecl) (*icetTerm.SymSet, bool) {
+func parseSymSetDecl(decl *ast.FuncDecl, comments ast.CommentMap) (*icetTerm.SymSet, bool) {
 	for _, stmt := range decl.Body.List {
 		stmt, ok := stmt.(*ast.ExprStmt)
 		if ok {
@@ -167,12 +205,10 @@ func parseSymSetDecl(decl *ast.FuncDecl) (*icetTerm.SymSet, bool) {
 			if ok {
 				set, ok := parseStartSymSet(stmt)
 				if ok {
-					fmt.Printf("decending with set name: %v and proc:%v\n", set.Name, set.ProcVar)
-					sv := makeNewIceTVisitor()
+					sv := makeNewIceTVisitor(comments)
 					sv.currentSet = set.Name
 					sv.currentProcId = set.ProcVar
 					ast.Walk(sv, decl.Body)
-					fmt.Printf("done descending.\n")
 					set.Stmts = *sv.currentProccess
 					return set, true
 				}
@@ -186,7 +222,7 @@ func parseStartSymSet(site *ast.CallExpr) (*icetTerm.SymSet, bool) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "StartSymSet" {
-			procVar := getValue(site.Args[1])
+			procVar := strings.ToUpper(getValue(site.Args[1]))
 			setName := getValue(site.Args[0])
 			set := icetTerm.SymSet{ProcVar: procVar, Name: setName, Stmts: *icetTerm.NewProcess()}
 			return &set, true
