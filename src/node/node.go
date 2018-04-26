@@ -119,13 +119,13 @@ func (n *Node) msgListener(id int, reader *bufio.Reader) {
 	var b [4]byte
 	bs := b[:4]
 	if _, err := io.ReadAtLeast(reader, bs, 4); err != nil {
-		log.Printf("Error reading message from %v", id)
+		log.Printf("Error reading message from %v: %v", id, err)
 	}
 	msg := int32(binary.LittleEndian.Uint32(bs))
 	n.MsgChan <- msg
 }
 
-func (n *Node) Send(id int, msg int32) {
+func (n *Node) NSend(id int, msg int32) {
 	var b [4]byte
 	bs := b[:4]
 	w := n.Writers[id]

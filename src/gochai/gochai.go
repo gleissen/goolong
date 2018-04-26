@@ -1,29 +1,52 @@
 package gochai
 
-import "fmt"
-import "node"
+import (
+	"node"
+)
 
-func CreateNewNode(id int, myaddr string, peerAddrList []string, isServer bool) *node.Node {
-	n := node.MakeNode(id, myaddr, peerAddrList, isServer)
+type ChaiNode struct {
+	*node.Node        // extends node
+	Set        SymSet //node belongs to set Set
+}
+
+type SymSet struct {
+	InSet bool
+	Name  string
+	Param string
+}
+
+func CreateNewNode(id int, myaddr string, peerAddrList []string, isServer bool) *ChaiNode {
+	n := &ChaiNode{
+		node.MakeNode(id, myaddr, peerAddrList, isServer),
+		EmptySet()}
 	n.Run()
 	<-n.Connected
 	return n
 }
 
+func (n *ChaiNode) AssignSymSet(name string, param string) {
+	n.Set = SymSet{InSet: false, Name: name, Param: param}
+}
+
+func (n *ChaiNode) StartSymSet(name string, param string) {
+	n.Set = SymSet{InSet: true, Name: name, Param: param}
+}
+
+func (n *ChaiNode) EndSymSet() {
+	// this is just for extracting terms
+}
+
+func EmptySet() SymSet {
+	return SymSet{InSet: false, Name: "", Param: ""}
+}
+
 // Send sends msg to id
-func Send(id int, msg int32, n *node.Node) {
-	fmt.Printf("sending %v to %v\n", id, msg)
-	n.Send(id, msg)
+func (n *ChaiNode) Send(id int, msg int32) {
+	n.NSend(id, msg)
 }
 
 // Recv blocks until a message is received and then return the receive value
-func Recv(n *node.Node) int32 {
+func (n *ChaiNode) Recv() int32 {
 	msg := <-n.MsgChan
-	fmt.Printf("received %v \n", msg)
 	return msg
-}
-
-// TODO
-func Broadcast(addr []int, msg int) {
-	//TODO
 }

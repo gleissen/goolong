@@ -15,7 +15,7 @@ type IcetTerm interface {
 
 // Programs
 type Program struct {
-	procs []Process
+	procs []IcetTerm
 }
 
 type Process struct {
@@ -31,6 +31,19 @@ type Send struct {
 type Recv struct {
 	ProcID   string
 	Variable string
+}
+
+type ForLoop struct {
+	ProcID  string
+	LoopVar string
+	Set     string
+	Stmts   Process
+}
+
+type SymSet struct {
+	ProcVar string
+	Name    string
+	Stmts   Process
 }
 
 // Send statements
@@ -51,22 +64,41 @@ func (r *Recv) PrintIceT() string {
 	return fmt.Sprintf("recv(%v, %v)", r.ProcID, r.Variable)
 }
 
-// Programs
-func NewProgram() *Program {
-	return &Program{make([]Process, 0, PROC_SIZE)}
+// For Loops
+
+func (l *ForLoop) PrettyPrint() string {
+	return fmt.Sprintf("%v: for %v in %v do %v end", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
 }
 
-func (p *Program) AddProc(proc Process) {
+func (l *ForLoop) PrintIceT() string {
+	//TODO stub
+	return fmt.Sprintf("for(%v, %v, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrintIceT())
+}
+
+func (s *SymSet) PrintIceT() string {
+	return fmt.Sprintf("sym(%v, %v, %v)", s.ProcVar, s.Name, s.Stmts.PrintIceT())
+}
+
+func (s *SymSet) PrettyPrint() string {
+	return fmt.Sprintf("∏_%v:%v(%v)", s.ProcVar, s.Name, s.Stmts.PrettyPrint())
+}
+
+// Programs
+func NewProgram() *Program {
+	return &Program{make([]IcetTerm, 0, PROC_SIZE)}
+}
+
+func (p *Program) AddProc(proc IcetTerm) {
 	p.procs = append(p.procs, proc)
 }
 
-func (p *Program) RemoveLastProc() (Process, bool) {
+func (p *Program) RemoveLastProc() (IcetTerm, bool) {
 	if len(p.procs) > 0 {
 		proc := p.procs[len(p.procs)-1]
 		p.procs = p.procs[:len(p.procs)-1]
 		return proc, true
 	}
-	return Process{make([]IcetTerm, 0)}, false
+	return NewProcess(), false
 }
 
 func (p *Program) PrettyPrint() string {

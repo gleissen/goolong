@@ -18,15 +18,14 @@ func main() {
 }
 
 func runClientProtocol() {
-	n := gochai.CreateNewNode(1, ":7071", []string{":7070"})
-	fmt.Println("Acting as client.")
-	fmt.Println("Sending 42 to server.")
+	n := gochai.CreateNewNode(1, ":7071", []string{":7070"}, false)
+	fmt.Printf("Acting as client %v.", n.Id)
 	n.Send(0, 42)
 }
 
 func runServerProtocol() {
 	fmt.Println("Acting as server.")
-	n := gochai.CreateNewNode(0, ":7070", []string{":7071"})
-	msg := gochai.Recv(n)
+	n := gochai.CreateNewNode(0, ":7070", []string{":7071"}, true)
+	msg := n.Recv()
 	fmt.Printf("Received Message: %v", msg)
 }
