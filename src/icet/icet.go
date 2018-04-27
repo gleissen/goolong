@@ -20,8 +20,10 @@ type IceTVisitor struct {
 	currentProgram  *icetTerm.Program
 	currentProccess *icetTerm.Process
 	currentSet      string
+	inSet           bool
 	IceTTerm        string
 	Comments        ast.CommentMap
+	Declarations    icetTerm.Declarations
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -37,17 +39,18 @@ func (v *IceTVisitor) MakeIceTTerm() string {
 	v.currentProgram.AddProc(v.currentProccess)
 	v.IceTTerm = v.currentProgram.PrintIceT()
 	v.currentProgram.RemoveLastProc()
-	return v.IceTTerm
+	return fmt.Sprintf("prog(forloop, %v, todo:property, %v)", v.Declarations.PrintIceT(), v.IceTTerm)
 }
 
 func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
-
 	v := &IceTVisitor{"",
 		icetTerm.NewProgram(),
 		icetTerm.NewProcess(),
 		"",
+		false,
 		"",
-		comments}
+		comments,
+		icetTerm.Declarations{Decls: make([]string, 0)}}
 	return v
 }
 
@@ -61,8 +64,7 @@ func main() {
 	}
 	v := makeNewIceTVisitor(comments)
 	ast.Walk(v, node)
-	//fmt.Printf("proccess: %v\n icet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
-	fmt.Printf("icet-t: %v\n", v.MakeIceTTerm())
+	fmt.Printf("pretty-print:%v\nicet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
 }
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
@@ -76,7 +78,6 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 			// New Node
 			proc, ok := parseNewNode(node.(*ast.CallExpr))
 			if ok {
-				//v.allProcs = append(v.allProcs, v.currentTerm)
 				v.currentProgram.AddProc(v.currentProccess)
 				if v.currentProcId == "" {
 					v.currentProcId = proc
@@ -90,25 +91,21 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		if ok {
 			v.currentProccess.AddStmt(recvStmt)
 		}
+		decl, ok := parseDeclaration(node.(*ast.AssignStmt), v.inSet, v.currentSet)
+		if ok {
+			v.Declarations.Decls = append(v.Declarations.Decls, decl)
+		}
 	case *ast.RangeStmt:
 		// For loop
-		LoopStmt, ok := parseForLoop(node.(*ast.RangeStmt), v.currentProcId, v.Comments)
-		if ok {
-			v.currentProccess.AddStmt(LoopStmt)
-		}
+		parseForLoop(node.(*ast.RangeStmt), v)
 		// don't traverse children
 		return nil
 	case *ast.FuncDecl:
 		// symmetric set
-		set, ok := parseSymSetDecl(node.(*ast.FuncDecl), v.Comments)
+		ok := parseSymSetDecl(node.(*ast.FuncDecl), v)
 		if ok {
-			v.currentProgram.AddProc(set)
 			return nil
 		}
-		// case *ast.CommentGroup:
-		// 	c := node.(*ast.CommentGroup)
-		// 	fmt.Printf("found comment %v\n", c.Text())
-		// 	v.Comments = append(v.Comments, *c)
 	}
 	return v
 }
@@ -170,19 +167,21 @@ func parseComments(comments []*ast.CommentGroup) string {
 	return invariant
 }
 
-func parseForLoop(loopTerm *ast.RangeStmt, proc string, comments ast.CommentMap) (*icetTerm.ForLoop, bool) {
+func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
-		loopComments := comments.Filter(loopTerm.Body)
+		loopComments := v.Comments.Filter(loopTerm.Body)
 		invariant := parseComments(loopComments.Comments())
 		loopVar := loopTerm.Key.(*ast.Ident).Name
 		loopVar = strings.ToUpper(loopVar)
-		lv := makeNewIceTVisitor(comments)
-		lv.currentProcId = proc
+		lv := makeNewIceTVisitor(v.Comments)
+		lv.currentProcId = v.currentProcId
 		ast.Walk(lv, loopTerm.Body)
-		return &icetTerm.ForLoop{ProcID: proc, LoopVar: loopVar, Set: "clients", Invariant: invariant, Stmts: *lv.currentProccess}, true
+		v.Declarations.Append(&lv.Declarations)
+		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: loopVar, Set: "clients", Invariant: invariant, Stmts: *lv.currentProccess}
+		v.currentProccess.AddStmt(&LoopStmt)
 	}
-	return nil, false
+
 }
 
 func parseSend(site *ast.CallExpr, proc string) (*icetTerm.Send, bool) {
@@ -197,7 +196,7 @@ func parseSend(site *ast.CallExpr, proc string) (*icetTerm.Send, bool) {
 	return nil, false
 }
 
-func parseSymSetDecl(decl *ast.FuncDecl, comments ast.CommentMap) (*icetTerm.SymSet, bool) {
+func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
 	for _, stmt := range decl.Body.List {
 		stmt, ok := stmt.(*ast.ExprStmt)
 		if ok {
@@ -205,17 +204,21 @@ func parseSymSetDecl(decl *ast.FuncDecl, comments ast.CommentMap) (*icetTerm.Sym
 			if ok {
 				set, ok := parseStartSymSet(stmt)
 				if ok {
-					sv := makeNewIceTVisitor(comments)
+					sv := makeNewIceTVisitor(v.Comments)
 					sv.currentSet = set.Name
+					sv.inSet = true
 					sv.currentProcId = set.ProcVar
 					ast.Walk(sv, decl.Body)
+					v.Declarations.Append(&sv.Declarations)
+					v.currentProgram.AddProc(set)
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,set)", set.Name))
 					set.Stmts = *sv.currentProccess
-					return set, true
+					return true
 				}
 			}
 		}
 	}
-	return nil, false
+	return false
 }
 
 func parseStartSymSet(site *ast.CallExpr) (*icetTerm.SymSet, bool) {
@@ -229,6 +232,25 @@ func parseStartSymSet(site *ast.CallExpr) (*icetTerm.SymSet, bool) {
 		}
 	}
 	return nil, false
+}
+
+func parseDeclaration(assign *ast.AssignStmt, inSet bool, setName string) (string, bool) {
+	if len(assign.Rhs) == 1 {
+		site, ok := assign.Rhs[0].(*ast.CallExpr)
+		if ok {
+			sel, ok := site.Fun.(*ast.SelectorExpr)
+			if ok {
+				if sel.Sel.Name == "NewVar" {
+					varName := assign.Lhs[0].(*ast.Ident).Name
+					if inSet {
+						return fmt.Sprintf("decl(%v, map(set(%v), int))", varName, setName), true
+					}
+					return fmt.Sprintf("decl(%v, int)", varName), true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 func parseRecv(assign *ast.AssignStmt, proc string) (*icetTerm.Recv, bool) {

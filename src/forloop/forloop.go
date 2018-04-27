@@ -26,9 +26,10 @@ func runServerProtocol(peerAddresses []string) {
 	fmt.Println("Acting as server.")
 	//Protocol--
 	for ID := range n.PeerIds {
+		val := gochai.NewVar()
 		// {-@ invariant: forall([decl(id,int)], implies(elem(id,done), ref(msg, id)=42)) -@}
 		fmt.Printf("sending 42 to %v\n", ID)
-		val := gochai.NewIntVar(42)
+		val = val.Assign(42)
 		n.Send(ID, val)
 	}
 	//--end
@@ -37,9 +38,10 @@ func runServerProtocol(peerAddresses []string) {
 func runClientProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
 	fmt.Println("Acting as client.")
+	msg := gochai.NewVar()
 	// Protocol --
 	n.StartSymSet("clients", "p")
-	msg := n.Recv()
+	msg = n.Recv()
 	fmt.Printf("Received Message: %v", msg.Get())
 	// -- end
 }

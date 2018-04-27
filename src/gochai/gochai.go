@@ -26,8 +26,12 @@ type IntVar struct {
 	thisVar int32
 }
 
-func NewIntVar(val int32) IntVar {
-	return IntVar{thisVar: val}
+//func NewIntVar(val int32) IntVar {
+//	return IntVar{thisVar: val}
+//}
+
+func NewVar() IntVar {
+	return IntVar{thisVar: -1}
 }
 
 func (v *IntVar) Assign(val int32) {

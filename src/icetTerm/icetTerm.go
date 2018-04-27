@@ -2,6 +2,7 @@ package icetTerm
 
 import (
 	"fmt"
+	"strings"
 )
 
 const PROC_SIZE = 5
@@ -20,6 +21,16 @@ type Program struct {
 
 type Process struct {
 	stmts []IcetTerm
+}
+
+type Declarations struct {
+	Decls []string
+}
+
+type Assign struct {
+	ProcID string
+	Var    string
+	Value  string
 }
 
 type Send struct {
@@ -47,6 +58,33 @@ type SymSet struct {
 	Stmts   Process
 }
 
+// Declarations
+
+func (d *Declarations) PrettyPrint() string {
+	return fmt.Sprintf("declarations: %v\n", strings.Join(d.Decls, ","))
+}
+
+func (d *Declarations) PrintIceT() string {
+	return fmt.Sprintf("[%v]", strings.Join(d.Decls, ","))
+}
+
+func (d *Declarations) AppendDecl(decl string) {
+	d.Decls = append(d.Decls, decl)
+}
+
+func (d *Declarations) Append(d1 *Declarations) {
+	d.Decls = append(d.Decls, d1.Decls...)
+}
+
+// Assign statements
+func (a *Assign) PrettyPrint() string {
+	return fmt.Sprintf("%v: %v:=%v)", a.ProcID, a.Var, a.Value)
+}
+
+func (a *Assign) PrintIceT() string {
+	return fmt.Sprintf("assign(%v,%v,%v))", a.ProcID, a.Var, a.Value)
+}
+
 // Send statements
 func (s *Send) PrettyPrint() string {
 	return fmt.Sprintf("%v: send(%v, %v)", s.ProcID, s.RecipientID, s.Value)
@@ -68,7 +106,8 @@ func (r *Recv) PrintIceT() string {
 // For Loops
 
 func (l *ForLoop) PrettyPrint() string {
-	return fmt.Sprintf("invariant: %v\n%v: for %v in %v do %v end", l.Invariant, l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
+	//return fmt.Sprintf("invariant: %v\n%v: for %v in %v do %v end", l.Invariant, l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
+	return fmt.Sprintf("%v: for %v in %v do %v end", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
 }
 
 func (l *ForLoop) PrintIceT() string {
@@ -128,7 +167,7 @@ func (p *Program) PrintIceT() string {
 	} else {
 		prog = SKIP
 	}
-	return fmt.Sprintf("prog(prog,[], false, %v)", prog)
+	return prog
 }
 
 // Processes
