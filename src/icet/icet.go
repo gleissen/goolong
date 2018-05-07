@@ -13,7 +13,16 @@ import (
 const COMMENT_SIZE = 5
 const ANNOTATION_START = "{-@"
 const ANNOTATION_END = "-@}"
-const INVARIANT_TYPE = "invariant:"
+const INVARIANT_PREFIX = "invariant:"
+const PROPERTY_PREFIX = "ensures:"
+
+type AnnotatationType int
+
+const ( // annotation types
+	inv  AnnotatationType = iota
+	prop                  = iota
+	none                  = iota
+)
 
 type IceTVisitor struct {
 	currentProcId   string
@@ -23,6 +32,7 @@ type IceTVisitor struct {
 	inSet           bool
 	IceTTerm        string
 	Comments        ast.CommentMap
+	Property        string
 	Declarations    icetTerm.Declarations
 }
 
@@ -39,7 +49,7 @@ func (v *IceTVisitor) MakeIceTTerm() string {
 	v.currentProgram.AddProc(v.currentProccess)
 	v.IceTTerm = v.currentProgram.PrintIceT()
 	v.currentProgram.RemoveLastProc()
-	return fmt.Sprintf("prog(forloop, %v, todo:property, %v)", v.Declarations.PrintIceT(), v.IceTTerm)
+	return fmt.Sprintf("prog(forloop, %v, ensures(%v), %v)", v.Declarations.PrintIceT(), v.Property, v.IceTTerm)
 }
 
 func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
@@ -50,6 +60,7 @@ func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
 		false,
 		"",
 		comments,
+		"",
 		icetTerm.Declarations{Decls: make([]string, 0)}}
 	return v
 }
@@ -63,8 +74,9 @@ func main() {
 		log.Fatal(err)
 	}
 	v := makeNewIceTVisitor(comments)
+	v.Property = parseComments(comments.Comments(), prop)
 	ast.Walk(v, node)
-	fmt.Printf("pretty-print:%v\nicet-t: %v\n", v.PrettyPrint(), v.MakeIceTTerm())
+	fmt.Printf("%v.", v.MakeIceTTerm())
 }
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
@@ -148,34 +160,41 @@ func parseNewNode(site *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-func parseComment(comment *ast.CommentGroup) string {
+func parseComment(comment *ast.CommentGroup) (string, AnnotatationType) {
 	s := comment.Text()
 	s = strings.Trim(s, "\n")
 	if strings.HasPrefix(s, ANNOTATION_START) && strings.HasSuffix(s, ANNOTATION_END) {
 		s = strings.TrimPrefix(s, ANNOTATION_START)
 		s = strings.TrimSuffix(s, ANNOTATION_END)
 		s = strings.TrimSpace(s)
-		if strings.HasPrefix(s, INVARIANT_TYPE) {
-			s = strings.TrimPrefix(s, INVARIANT_TYPE)
+		if strings.HasPrefix(s, INVARIANT_PREFIX) {
+			s = strings.TrimPrefix(s, INVARIANT_PREFIX)
+			return s, inv
+		} else if strings.HasPrefix(s, PROPERTY_PREFIX) {
+			s = strings.TrimPrefix(s, PROPERTY_PREFIX)
+			return s, prop
 		}
-		return strings.TrimSpace(s)
 	}
-	return ""
+	return "", none
 }
 
-func parseComments(comments []*ast.CommentGroup) string {
-	invariant := ""
+func parseComments(comments []*ast.CommentGroup, annotType AnnotatationType) string {
+	annotations := make([]string, 0)
 	for _, comment := range comments {
-		invariant = invariant + parseComment(comment)
+		annot, atype := parseComment(comment)
+		if atype == annotType {
+			annotations = append(annotations, annot)
+		}
 	}
-	return invariant
+	return strings.Join(annotations, ",")
+
 }
 
 func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
 		loopComments := v.Comments.Filter(loopTerm.Body)
-		invariant := parseComments(loopComments.Comments())
+		invariant := parseComments(loopComments.Comments(), inv)
 		loopVar := loopTerm.Key.(*ast.Ident).Name
 		loopVar = strings.ToUpper(loopVar)
 		lv := makeNewIceTVisitor(v.Comments)

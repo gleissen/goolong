@@ -82,7 +82,7 @@ func (a *Assign) PrettyPrint() string {
 }
 
 func (a *Assign) PrintIceT() string {
-	return fmt.Sprintf("assign(%v,%v,%v))", a.ProcID, a.Var, a.Value)
+	return fmt.Sprintf("assign(%v,%v,%v)", a.ProcID, a.Var, a.Value)
 }
 
 // Send statements
@@ -112,7 +112,7 @@ func (l *ForLoop) PrettyPrint() string {
 
 func (l *ForLoop) PrintIceT() string {
 	//TODO stub
-	return fmt.Sprintf("for(%v, %v, %v, done, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
+	return fmt.Sprintf("for(%v, %v, %v, rr, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
 }
 
 func (s *SymSet) PrintIceT() string {

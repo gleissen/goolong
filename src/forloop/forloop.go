@@ -26,8 +26,8 @@ func runServerProtocol(peerAddresses []string) {
 	fmt.Println("Acting as server.")
 	//Protocol--
 	for ID := range n.PeerIds {
+		// {-@ invariant: forall([decl(id,int)], implies(elem(id,rr), ref(msg, id)=42)) -@}
 		val := gochai.NewVar()
-		// {-@ invariant: forall([decl(id,int)], implies(elem(id,done), ref(msg, id)=42)) -@}
 		fmt.Printf("sending 42 to %v\n", ID)
 		val = val.Assign(42)
 		n.Send(ID, val)
@@ -46,4 +46,4 @@ func runClientProtocol(peerAddresses []string) {
 	// -- end
 }
 
-// {@- ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}
+// {-@ ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}
