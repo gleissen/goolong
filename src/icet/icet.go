@@ -95,6 +95,10 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		if ok {
 			v.Declarations.Decls = append(v.Declarations.Decls, decl)
 		}
+		assignStmt, ok := parseAssign(node.(*ast.AssignStmt), v.currentProcId)
+		if ok {
+			v.currentProccess.AddStmt(assignStmt)
+		}
 	case *ast.RangeStmt:
 		// For loop
 		parseForLoop(node.(*ast.RangeStmt), v)
@@ -182,6 +186,29 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) {
 		v.currentProccess.AddStmt(&LoopStmt)
 	}
 
+}
+
+/*
+ProcID string
+Var    string
+Value  string
+*/
+
+func parseAssign(assign *ast.AssignStmt, proc string) (*icetTerm.Assign, bool) {
+	if len(assign.Rhs) == 1 {
+		site, ok := assign.Rhs[0].(*ast.CallExpr)
+		if ok {
+			sel, ok := site.Fun.(*ast.SelectorExpr)
+			if ok {
+				if sel.Sel.Name == "Assign" {
+					variable := assign.Lhs[0].(*ast.Ident).Name
+					value := getValue(site.Args[0])
+					return &icetTerm.Assign{ProcID: proc, Var: variable, Value: value}, true
+				}
+			}
+		}
+	}
+	return nil, false
 }
 
 func parseSend(site *ast.CallExpr, proc string) (*icetTerm.Send, bool) {

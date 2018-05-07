@@ -94,5 +94,7 @@ func (n *ChaiNode) Send(id int, msg IntVar) {
 // Recv blocks until a message is received and then return the receive value
 func (n *ChaiNode) Recv() IntVar {
 	msg := <-n.MsgChan
-	return NewIntVar(msg)
+	v := NewVar()
+	v.Assign(msg)
+	return v
 }

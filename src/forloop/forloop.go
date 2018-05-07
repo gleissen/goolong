@@ -46,4 +46,4 @@ func runClientProtocol(peerAddresses []string) {
 	// -- end
 }
 
-//{@- ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}
+// {@- ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}
