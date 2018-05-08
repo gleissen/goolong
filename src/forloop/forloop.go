@@ -29,7 +29,7 @@ func runServerProtocol(peerAddresses []string) {
 		// {-@ invariant: forall([decl(id,int)], implies(elem(id,rr), ref(msg, id)=42)) -@}
 		val := gochai.NewVar()
 		fmt.Printf("sending 42 to %v\n", ID)
-		val = val.Assign(42)
+		val.Assign(42)
 		n.Send(ID, val)
 	}
 	//--end

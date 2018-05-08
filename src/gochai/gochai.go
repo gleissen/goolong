@@ -1,6 +1,7 @@
 package gochai
 
 import (
+	"fmt"
 	"node"
 )
 
@@ -9,10 +10,6 @@ type ChaiNode struct {
 	Set        SymSet //node belongs to set Set
 	//StateVars  []StateVar
 }
-
-// type StateVar interface {
-// 	getType() string
-// }
 
 type SymSet struct {
 	InSet bool
@@ -26,9 +23,9 @@ type IntVar struct {
 	thisVar int32
 }
 
-//func NewIntVar(val int32) IntVar {
-//	return IntVar{thisVar: val}
-//}
+type BoolVar struct {
+	thisVar bool
+}
 
 func NewVar() IntVar {
 	return IntVar{thisVar: -1}
@@ -39,6 +36,23 @@ func (v *IntVar) Assign(val int32) {
 }
 
 func (v *IntVar) Get() int32 {
+	return v.thisVar
+}
+
+// -- get user input from stdin
+func (v *IntVar) ReadIO() {
+	fmt.Scanf("%v", &v.thisVar)
+}
+
+func NewBoolVar() BoolVar {
+	return BoolVar{thisVar: false}
+}
+
+func (v *BoolVar) Assign(val bool) {
+	v.thisVar = val
+}
+
+func (v *BoolVar) Get() bool {
 	return v.thisVar
 }
 

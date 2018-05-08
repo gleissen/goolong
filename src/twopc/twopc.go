@@ -24,44 +24,48 @@ func main() {
 
 func runCoordinatorProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", c, *myAddr, peerAddresses, false)
+	fmt.Println("Acting as coordinator.")
 	n.AssignSymSet("dbs", "")
-	fmt.Println("Acting as coordinator.\n")
 	proposal := gochai.NewVar()
 	decision := gochai.NewVar()
 	abort := gochai.NewVar()
+	committed := gochai.NewVar()
+	committed.Assign(0)
 	abort.Assign(0)
+	fmt.Println("Please enter your proposal number")
+	proposal.ReadIO()
 	//Protocol--
 	for ID := range n.PeerIds {
-		// {-@ invariant: ? -@}
+		// {-@ invariant: forall([decl(i,int)], implies(and([elem(i,rr)]), and([ref(value,i)=0, ref(val,i)=proposal]))) -@}
 		fmt.Printf("Sending proposal to %v\n", ID)
 		n.Send(ID, proposal)
 		decision = n.Recv()
 		fmt.Printf("Received %v\n", decision.Get())
-		if decision.Get() == 1 {
-			abort.Assign(1)
-		}
 	}
 	if decision.Get() == 1 {
+		abort.Assign(1)
 		fmt.Printf("Committing transaction for proposal %v\n", proposal.Get())
 	} else {
 		fmt.Printf("Abording transaction for proposal %v\n", proposal.Get())
 	}
-
 	//--end
 }
 
 func runServerProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
 	fmt.Println("Acting as db server.")
-	proposal := gochai.NewVar()
+	val := gochai.NewVar()
+	value := gochai.NewVar()
+	value.Assign(0)
 	reply := gochai.NewVar()
 	// Protocol --
 	n.StartSymSet("dbs", "p")
-	proposal = n.Recv()
-	fmt.Printf("Received proposal value %v.\n Enter 1 to accept and 0 to refuse.\n", proposal.Get())
+	val = n.Recv()
+	fmt.Printf("Received proposal value %v.\n Enter 1 to accept and 0 to refuse.\n", val.Get())
 	reply.ReadIO()
-	n.Send(c, proposal)
+	fmt.Printf("decision is: %v\n", reply.Get())
+	n.Send(c, reply)
 	// -- end
 }
 
-// {-@ ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}
+// {-@ ensures: and([forall([decl(i,int)], implies(and([elem(i,p), committed=1]), ref(value,i)=prop)), forall([decl(i,int)], implies(and([elem(i,p), committed=0]), ref(value,i)=0))]) -@}

@@ -58,7 +58,22 @@ type SymSet struct {
 	Stmts   Process
 }
 
+type Conditional struct {
+	ProcID string
+	Cond   string
+	Left   Process
+	Right  Process
+}
+
 // Declarations
+
+func (c *Conditional) PrettyPrint() string {
+	return fmt.Sprintf("%v: if %v then %v else %v\n", c.ProcID, c.Cond, c.Left.PrettyPrint(), c.Right.PrettyPrint())
+}
+
+func (c *Conditional) PrintIceT() string {
+	return fmt.Sprintf("ite(%v, %v, %v, %v)", c.ProcID, c.Cond, c.Left.PrintIceT(), c.Right.PrintIceT())
+}
 
 func (d *Declarations) PrettyPrint() string {
 	return fmt.Sprintf("declarations: %v\n", strings.Join(d.Decls, ","))
@@ -78,7 +93,7 @@ func (d *Declarations) Append(d1 *Declarations) {
 
 // Assign statements
 func (a *Assign) PrettyPrint() string {
-	return fmt.Sprintf("%v: %v:=%v)", a.ProcID, a.Var, a.Value)
+	return fmt.Sprintf("%v: %v:=%v", a.ProcID, a.Var, a.Value)
 }
 
 func (a *Assign) PrintIceT() string {
@@ -177,6 +192,10 @@ func NewProcess() *Process {
 
 func (proc *Process) Len() int {
 	return len(proc.stmts)
+}
+
+func (proc *Process) IsEmpty() bool {
+	return len(proc.stmts) == 0
 }
 
 func (proc *Process) AddStmt(stmt IcetTerm) {
