@@ -39,15 +39,14 @@ func runCoordinatorProtocol(peerAddresses []string) {
 		// {-@ invariant: forall([decl(i,int)], implies(and([elem(i,rr)]), and([ref(value,i)=0, ref(val,i)=proposal]))) -@}
 		fmt.Printf("Sending proposal to %v\n", ID)
 		n.Send(ID, proposal)
-		decision = n.Recv()
+		decision = n.RecvFrom(ID)
 		fmt.Printf("Received %v\n", decision.Get())
+		if decision.Get() == 0 {
+			abort.Assign(1)
+			fmt.Printf("abording proposal %v\n", proposal.Get())
+		}
 	}
-	if decision.Get() == 1 {
-		abort.Assign(1)
-		fmt.Printf("Committing transaction for proposal %v\n", proposal.Get())
-	} else {
-		fmt.Printf("Abording transaction for proposal %v\n", proposal.Get())
-	}
+
 	//--end
 }
 
@@ -68,4 +67,4 @@ func runServerProtocol(peerAddresses []string) {
 	// -- end
 }
 
-// {-@ ensures: and([forall([decl(i,int)], implies(and([elem(i,p), committed=1]), ref(value,i)=prop)), forall([decl(i,int)], implies(and([elem(i,p), committed=0]), ref(value,i)=0))]) -@}
+// {-@ ensures: and([forall([decl(i,int)], implies(and([elem(i,dbs), committed=1]), ref(value,i)=proposal)), forall([decl(i,int)], implies(and([elem(i,dbs), committed=0]), ref(value,i)=0))]) -@}

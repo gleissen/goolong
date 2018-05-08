@@ -312,9 +312,12 @@ func parseRecv(assign *ast.AssignStmt, proc string) (*icetTerm.Recv, bool) {
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
+				arg1 := assign.Lhs[0].(*ast.Ident).Name
 				if sel.Sel.Name == "Recv" {
-					arg1 := assign.Lhs[0].(*ast.Ident).Name
-					return &icetTerm.Recv{ProcID: proc, Variable: arg1}, true
+					return &icetTerm.Recv{ProcID: proc, Variable: arg1, IsRecvFrom: false}, true
+				} else if sel.Sel.Name == "RecvFrom" {
+					id := site.Args[0].(*ast.Ident).Name
+					return &icetTerm.Recv{ProcID: proc, Variable: arg1, FromId: id, IsRecvFrom: true}, true
 				}
 			}
 		}
@@ -339,15 +342,19 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) (*icetTerm.Conditional
 	vl.currentProcId = v.currentProcId
 	ast.Walk(vl, ifStmt.Body)
 	// parse right subexpression
-	vr := makeNewIceTVisitor(v.Comments)
-	vr.currentProcId = v.currentProcId
-	ast.Walk(vr, ifStmt.Else)
-	if !vl.currentProccess.IsEmpty() || !vr.currentProccess.IsEmpty() {
-		return &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *vr.currentProccess}, true
+	var rightproc *icetTerm.Process
+	if ifStmt.Else != nil {
+		vr := makeNewIceTVisitor(v.Comments)
+		vr.currentProcId = v.currentProcId
+		ast.Walk(vr, ifStmt.Else)
+		rightproc = vr.currentProccess
 	} else {
-		return nil, false
+		rightproc = icetTerm.NewProcess()
 	}
-
+	if !vl.currentProccess.IsEmpty() {
+		return &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}, true
+	}
+	return nil, false
 }
 
 func parseCondition(cond ast.Expr) string {

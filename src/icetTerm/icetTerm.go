@@ -40,8 +40,10 @@ type Send struct {
 }
 
 type Recv struct {
-	ProcID   string
-	Variable string
+	ProcID     string
+	Variable   string
+	FromId     string
+	IsRecvFrom bool
 }
 
 type ForLoop struct {
@@ -111,22 +113,26 @@ func (s *Send) PrintIceT() string {
 
 // Receive statements
 func (r *Recv) PrettyPrint() string {
+	if r.IsRecvFrom {
+		return fmt.Sprintf("%v: %v:=recvFrom(%v)", r.ProcID, r.Variable, r.FromId)
+	}
 	return fmt.Sprintf("%v: recv(%v)", r.ProcID, r.Variable)
 }
 
 func (r *Recv) PrintIceT() string {
+	if r.IsRecvFrom {
+		return fmt.Sprintf("recv(%v, e_pid(%v), %v)", r.ProcID, r.FromId, r.Variable)
+	}
 	return fmt.Sprintf("recv(%v, %v)", r.ProcID, r.Variable)
 }
 
 // For Loops
 
 func (l *ForLoop) PrettyPrint() string {
-	//return fmt.Sprintf("invariant: %v\n%v: for %v in %v do %v end", l.Invariant, l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
 	return fmt.Sprintf("%v: for %v in %v do %v end", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
 }
 
 func (l *ForLoop) PrintIceT() string {
-	//TODO stub
 	return fmt.Sprintf("for(%v, %v, %v, rr, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
 }
 
