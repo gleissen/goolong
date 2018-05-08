@@ -3,6 +3,7 @@ package gochai
 import (
 	"fmt"
 	"node"
+	"reflect"
 )
 
 type ChaiNode struct {
@@ -102,12 +103,30 @@ func EmptySet() SymSet {
 
 // Send sends msg to id
 func (n *ChaiNode) Send(id int, msg IntVar) {
+	fmt.Printf("Sending msg %v to %v\n", msg.Get(), id)
 	n.NSend(id, msg.thisVar)
 }
 
-// Recv blocks until a message is received and then return the receive value
+// Recv blocks until a message  from any peer is received,
+// and returns the receive value.
 func (n *ChaiNode) Recv() IntVar {
-	msg := <-n.MsgChan
+	cases := make([]reflect.SelectCase, n.N)
+	for i, ch := range n.MsgChans {
+		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
+	}
+	chosen, value, _ := reflect.Select(cases)
+	msg := int32(value.Int())
+	fmt.Printf("received %v from %v\n", msg, chosen)
+	v := NewVar()
+	v.Assign(msg)
+	return v
+}
+
+// Receive from a given id
+func (n *ChaiNode) RecvFrom(id int) IntVar {
+	fmt.Printf("waiting for message from %v\n", id)
+	msg := <-n.MsgChans[id]
+	fmt.Printf("received msg %v from %v\n", msg, id)
 	v := NewVar()
 	v.Assign(msg)
 	return v

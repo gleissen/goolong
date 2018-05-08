@@ -19,8 +19,10 @@ func main() {
 
 func runClientProtocol() {
 	n := gochai.CreateNewNode("c", 1, ":7071", []string{":7070"}, false)
+	val := gochai.NewVar()
+	val.Assign(42)
 	fmt.Printf("Acting as client %v.", n.Id)
-	n.Send(0, gochai.NewIntVar(42))
+	n.Send(0, val)
 }
 
 func runServerProtocol() {

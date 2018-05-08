@@ -21,7 +21,7 @@ type Node struct {
 	Listener  net.Listener
 	Readers   []*bufio.Reader
 	Writers   []*bufio.Writer
-	MsgChan   chan int32
+	MsgChans  []chan int32
 	Connected chan bool
 }
 
@@ -39,8 +39,11 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 		nil,
 		make([]*bufio.Reader, N),
 		make([]*bufio.Writer, N),
-		make(chan int32, CHAN_BUFFER_SIZE),
+		make([]chan int32, N),
 		make(chan bool, 1)}
+	for i := range n.MsgChans {
+		n.MsgChans[i] = make(chan int32)
+	}
 	return n
 }
 
@@ -122,7 +125,8 @@ func (n *Node) msgListener(id int, reader *bufio.Reader) {
 		log.Printf("Error reading message from %v: %v", id, err)
 	}
 	msg := int32(binary.LittleEndian.Uint32(bs))
-	n.MsgChan <- msg
+	fmt.Printf("Received message %v; adding to channel %v", msg, id)
+	n.MsgChans[id] <- msg
 }
 
 func (n *Node) NSend(id int, msg int32) {
