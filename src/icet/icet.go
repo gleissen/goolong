@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -68,8 +69,14 @@ func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
 
 func main() {
 	// parsing file
+	flag.Parse()
+	if flag.NArg() != 1 {
+		log.Fatal("usage: icet <go file>")
+	}
+	file := flag.Args()[0]
+
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, "../twopc/twopc.go", nil, parser.ParseComments)
+	node, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 	comments := ast.NewCommentMap(fset, node, node.Comments)
 	if err != nil {
 		log.Fatal(err)
