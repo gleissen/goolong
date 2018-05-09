@@ -26,27 +26,44 @@ func runCoordinatorProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", c, *myAddr, peerAddresses, false)
 	fmt.Println("Acting as coordinator.")
 	n.AssignSymSet("dbs", "")
+	// Declaring protocol state
 	proposal := gochai.NewVar()
-	decision := gochai.NewVar()
+	vote := gochai.NewVar()
+	reply := gochai.NewVar()
 	abort := gochai.NewVar()
 	committed := gochai.NewVar()
+	ack := gochai.NewVar()
+	// Initializations
 	committed.Assign(0)
 	abort.Assign(0)
 	fmt.Println("Please enter your proposal number")
 	proposal.ReadIO()
-	//Protocol--
+	// First phase --
 	for ID := range n.PeerIds {
 		// {-@ invariant: forall([decl(i,int)], implies(and([elem(i,rr)]), and([ref(value,i)=0, ref(val,i)=proposal]))) -@}
 		fmt.Printf("Sending proposal to %v\n", ID)
 		n.Send(ID, proposal)
-		decision = n.RecvFrom(ID)
-		fmt.Printf("Received %v\n", decision.Get())
-		if decision.Get() == 0 {
+		vote = n.RecvFrom(ID)
+		fmt.Printf("Received %v\n", vote.Get())
+		if vote.Get() == 0 {
 			abort.Assign(1)
 			fmt.Printf("abording proposal %v\n", proposal.Get())
 		}
 	}
-
+	// -- Second phase --
+	if abort.Get() == 0 {
+		reply.Assign(1)
+		committed.Assign(1)
+	} else {
+		reply.Assign(0)
+	}
+	for ID := range n.PeerIds {
+		// {-@ invariant: forall([decl(i,int)],  and([ implies(and([elem(i,rr), committed=1]), ref(value,i)=ref(val,i)),  implies(and([elem(i,dbs), committed=0]), ref(value,i)=0)])) -@}
+		n.Send(ID, reply)
+		ack = n.RecvFrom(ID)
+	}
+	fmt.Printf("Decision for proposal %v is %v and ack %v\n", proposal.Get(), committed.Get(), ack)
+	n.Shutdown()
 	//--end
 }
 
@@ -55,16 +72,27 @@ func runServerProtocol(peerAddresses []string) {
 	fmt.Println("Acting as db server.")
 	val := gochai.NewVar()
 	value := gochai.NewVar()
+	decision := gochai.NewVar()
+	ackMsg := gochai.NewVar()
+	myVote := gochai.NewVar()
 	value.Assign(0)
-	reply := gochai.NewVar()
-	// Protocol --
 	n.StartSymSet("dbs", "p")
-	val = n.Recv()
+	// First phase --
+	val = n.RecvFrom(c)
 	fmt.Printf("Received proposal value %v.\n Enter 1 to accept and 0 to refuse.\n", val.Get())
-	reply.ReadIO()
-	fmt.Printf("decision is: %v\n", reply.Get())
-	n.Send(c, reply)
-	// -- end
+	myVote.ReadIO()
+	fmt.Printf("decision is: %v\n", myVote.Get())
+	n.Send(c, myVote)
+	// -- Sendond phase --
+	decision = n.RecvFrom(c)
+	if decision.Get() == 1 {
+		value.Assign(val.Get())
+	}
+	ackMsg.Assign(1)
+	n.Send(c, ackMsg)
+	fmt.Printf("Decision for proposal %v is %v; permanent value is %v", val.Get(), decision.Get(), value.Get())
+	n.Shutdown()
+	// --end
 }
 
 // {-@ ensures: and([forall([decl(i,int)], implies(and([elem(i,dbs), committed=1]), ref(value,i)=proposal)), forall([decl(i,int)], implies(and([elem(i,dbs), committed=0]), ref(value,i)=0))]) -@}

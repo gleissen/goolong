@@ -23,6 +23,7 @@ type Node struct {
 	Writers   []*bufio.Writer
 	MsgChans  []chan int32
 	Connected chan bool
+	Done      chan bool
 }
 
 func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node {
@@ -40,6 +41,7 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 		make([]*bufio.Reader, N),
 		make([]*bufio.Writer, N),
 		make([]chan int32, N),
+		make(chan bool, 1),
 		make(chan bool, 1)}
 	for i := range n.MsgChans {
 		n.MsgChans[i] = make(chan int32)
@@ -57,7 +59,6 @@ func makePeerIds(N int) []int {
 
 // Connect to peers
 func (n *Node) Connect() {
-	//done := make(chan bool)
 	if !n.IsServer {
 		n.waitForConnections() //(done)
 	} else {
@@ -121,12 +122,20 @@ func (n *Node) waitForConnections() { //done chan bool) {
 func (n *Node) msgListener(id int, reader *bufio.Reader) {
 	var b [4]byte
 	bs := b[:4]
-	if _, err := io.ReadAtLeast(reader, bs, 4); err != nil {
-		log.Printf("Error reading message from %v: %v", id, err)
+	for {
+		// loop until we get a done messsage
+		select {
+		case <-n.Done:
+			break
+		default:
+			if _, err := io.ReadAtLeast(reader, bs, 4); err != nil {
+				log.Printf("Error reading message from %v: %v", id, err)
+			}
+			msg := int32(binary.LittleEndian.Uint32(bs))
+			fmt.Printf("Received message %v; adding to channel %v", msg, id)
+			n.MsgChans[id] <- msg
+		}
 	}
-	msg := int32(binary.LittleEndian.Uint32(bs))
-	fmt.Printf("Received message %v; adding to channel %v", msg, id)
-	n.MsgChans[id] <- msg
 }
 
 func (n *Node) NSend(id int, msg int32) {

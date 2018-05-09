@@ -23,6 +23,7 @@ func runClientProtocol() {
 	val.Assign(42)
 	fmt.Printf("Acting as client %v.", n.Id)
 	n.Send(0, val)
+	n.Shutdown()
 }
 
 func runServerProtocol() {
@@ -30,4 +31,5 @@ func runServerProtocol() {
 	n := gochai.CreateNewNode("m", 0, ":7070", []string{":7071"}, true)
 	msg := n.Recv()
 	fmt.Printf("Received Message: %v", msg.Get())
+	n.Shutdown()
 }

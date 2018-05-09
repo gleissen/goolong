@@ -32,6 +32,7 @@ func runServerProtocol(peerAddresses []string) {
 		val.Assign(42)
 		n.Send(ID, val)
 	}
+	n.Shutdown()
 	//--end
 }
 
@@ -44,6 +45,7 @@ func runClientProtocol(peerAddresses []string) {
 	msg = n.Recv()
 	fmt.Printf("Received Message: %v", msg.Get())
 	// -- end
+	n.Shutdown()
 }
 
 // {-@ ensures: forall([decl(p,int)], implies(elem(p, clients), ref(msg, p)=42)) -@}

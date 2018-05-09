@@ -89,6 +89,10 @@ func CreateNewNode(name string, id int, myaddr string, peerAddrList []string, is
 	return n
 }
 
+func (n *ChaiNode) Shutdown() {
+	n.Done <- true
+}
+
 func (n *ChaiNode) AssignSymSet(name string, param string) {
 	n.Set = SymSet{InSet: false, Name: name, Param: param}
 }

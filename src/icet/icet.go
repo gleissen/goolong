@@ -8,6 +8,7 @@ import (
 	"icetTerm"
 	"log"
 	"strings"
+	"unicode"
 )
 
 const COMMENT_SIZE = 5
@@ -153,6 +154,15 @@ func getValue(stmt ast.Node) string {
 		return stringRemoveQuotes(stmt.(*ast.BasicLit).Value)
 	case *ast.Ident:
 		return stringRemoveQuotes(stmt.(*ast.Ident).Name)
+	case *ast.CallExpr:
+		site, ok := stmt.(*ast.CallExpr)
+		if ok {
+			sel, ok := site.Fun.(*ast.SelectorExpr)
+			if ok && sel.Sel.Name == "Get" {
+				return sel.X.(*ast.Ident).Name
+			}
+		}
+		return ""
 	default:
 		return ""
 	}
@@ -336,7 +346,7 @@ Right  Process
 // parsing conditionals
 func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) (*icetTerm.Conditional, bool) {
 	//parse condition
-	cond := parseCondition(ifStmt.Cond)
+	cond := parseCondition(ifStmt.Cond, v)
 	// parse left subexpression
 	vl := makeNewIceTVisitor(v.Comments)
 	vl.currentProcId = v.currentProcId
@@ -357,29 +367,30 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) (*icetTerm.Conditional
 	return nil, false
 }
 
-func parseCondition(cond ast.Expr) string {
+func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 	switch cond.(type) {
 	case *ast.BinaryExpr:
 		binExp := cond.(*ast.BinaryExpr)
-		left := parseCondition(binExp.X)
-		right := parseCondition(binExp.Y)
+		left := parseCondition(binExp.X, v)
+		right := parseCondition(binExp.Y, v)
 		if binExp.Op.String() == "==" {
 			return fmt.Sprintf("%v=%v", left, right)
 		}
-	case *ast.CallExpr:
-		site, ok := cond.(*ast.CallExpr)
-		if ok {
-			sel, ok := site.Fun.(*ast.SelectorExpr)
-			if ok && sel.Sel.Name == "Get" {
-				return sel.X.(*ast.Ident).Name
-			}
+	default:
+		val := getValue(cond)
+		if v.inSet && !isInt(val) {
+			val = fmt.Sprintf("ref(%v,%v)", val, v.currentProcId)
 		}
-	case *ast.BasicLit:
-		lit, ok := cond.(*ast.BasicLit)
-		if ok {
-			return lit.Value
-		}
+		return val
 	}
 	return "ndet"
+}
 
+func isInt(s string) bool {
+	for _, c := range s {
+		if !unicode.IsDigit(c) {
+			return false
+		}
+	}
+	return true
 }
