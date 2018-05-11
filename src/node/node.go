@@ -7,8 +7,14 @@ import "time"
 import "encoding/binary"
 import "bufio"
 import "io"
+import "fastrpc"
 
 const CHAN_BUFFER_SIZE = 200000
+
+type RPCPair struct {
+	Obj   fastrpc.Serializable
+	Chans []chan fastrpc.Serializable
+}
 
 type Node struct {
 	Id        int
@@ -21,9 +27,10 @@ type Node struct {
 	Listener  net.Listener
 	Readers   []*bufio.Reader
 	Writers   []*bufio.Writer
-	MsgChans  []chan int32
 	Connected chan bool
 	Done      chan bool
+	rpcTable  map[uint8]*RPCPair
+	rpcCode   uint8
 }
 
 func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node {
@@ -40,12 +47,10 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 		nil,
 		make([]*bufio.Reader, N),
 		make([]*bufio.Writer, N),
-		make([]chan int32, N),
 		make(chan bool, 1),
-		make(chan bool, 1)}
-	for i := range n.MsgChans {
-		n.MsgChans[i] = make(chan int32)
-	}
+		make(chan bool, 1),
+		make(map[uint8]*RPCPair),
+		0}
 	return n
 }
 
@@ -120,31 +125,39 @@ func (n *Node) waitForConnections() { //done chan bool) {
 }
 
 func (n *Node) msgListener(id int, reader *bufio.Reader) {
-	var b [4]byte
-	bs := b[:4]
 	for {
 		// loop until we get a done messsage
 		select {
 		case <-n.Done:
 			break
 		default:
-			if _, err := io.ReadAtLeast(reader, bs, 4); err != nil {
-				log.Printf("Error reading message from %v: %v", id, err)
+			// read a byte containing the message type
+			msgType, err := reader.ReadByte()
+			if err != nil {
+				break
 			}
-			msg := int32(binary.LittleEndian.Uint32(bs))
-			fmt.Printf("Received message %v; adding to channel %v", msg, id)
-			n.MsgChans[id] <- msg
+			thisRpc := n.rpcTable[msgType]
+			obj := thisRpc.Obj.New()
+			if err := obj.Unmarshal(reader); err != nil {
+				break
+			}
+			thisRpc.Chans[id] <- obj
 		}
 	}
 }
 
-func (n *Node) NSend(id int, msg int32) {
-	var b [4]byte
-	bs := b[:4]
-	w := n.Writers[id]
-	binary.LittleEndian.PutUint32(bs, uint32(msg))
-	w.Write(bs)
-	w.Flush()
+func (n *Node) RegisterRPC(msgObj fastrpc.Serializable, chans []chan fastrpc.Serializable) uint8 {
+	code := n.rpcCode
+	n.rpcCode++
+	n.rpcTable[code] = &RPCPair{Obj: msgObj, Chans: chans}
+	return code
+}
+
+func (n *Node) NSend(id int, code uint8, msg fastrpc.Serializable) {
+	wire := n.Writers[id]
+	wire.WriteByte(code)
+	msg.Marshal(wire)
+	wire.Flush()
 }
 
 func (n *Node) Run() {
