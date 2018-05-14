@@ -17,6 +17,7 @@ const ANNOTATION_START = "{-@"
 const ANNOTATION_END = "-@}"
 const INVARIANT_PREFIX = "invariant:"
 const PROPERTY_PREFIX = "ensures:"
+const NDET = "ndet"
 
 type AnnotatationType int
 
@@ -51,7 +52,7 @@ func (v *IceTVisitor) MakeIceTTerm() string {
 	v.currentProgram.AddProc(v.currentProccess)
 	v.IceTTerm = v.currentProgram.PrintIceT()
 	v.currentProgram.RemoveLastProc()
-	return fmt.Sprintf("prog(twopc, %v, ensures(%v), %v)", v.Declarations.PrintIceT(), v.Property, v.IceTTerm)
+	return fmt.Sprintf("prog(raftcore, %v, ensures(%v), %v)", v.Declarations.PrintIceT(), v.Property, v.IceTTerm)
 }
 
 func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
@@ -84,55 +85,42 @@ func main() {
 	v := makeNewIceTVisitor(comments)
 	v.Property = parseComments(comments.Comments(), prop)
 	ast.Walk(v, node)
-	fmt.Printf("icet: %v.\n\n pretty print:\n%v \n", v.MakeIceTTerm(), v.PrettyPrint())
+	//fmt.Printf("icet: %v.\n\n pretty print:\n%v \n", v.MakeIceTTerm(), v.PrettyPrint())
+	fmt.Printf("%v.", v.MakeIceTTerm())
 }
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	switch node.(type) {
+
 	case *ast.CallExpr:
 		// Send
-		sendStmt, ok := parseSend(node.(*ast.CallExpr), v.currentProcId)
-		if ok {
-			v.currentProccess.AddStmt(sendStmt)
-		}
+		parseSend(node.(*ast.CallExpr), v)
 		// New Node
-		proc, ok := parseNewNode(node.(*ast.CallExpr))
-		if ok {
-			v.currentProgram.AddProc(v.currentProccess)
-			if v.currentProcId == "" {
-				v.currentProcId = proc
-			}
-			v.currentProccess = icetTerm.NewProcess()
-		}
-		assignStmt, ok := parseAssign(node.(*ast.CallExpr), v.currentProcId)
-		if ok {
-			v.currentProccess.AddStmt(assignStmt)
-		}
-		setName, ok := parseSymAssign(node.(*ast.CallExpr))
-		if ok {
-			v.currentSet = setName
-		}
+		parseNewNode(node.(*ast.CallExpr), v)
+		// Assignments
+		parseAssign(node.(*ast.CallExpr), v)
+		// Assigning a symmetric proccess to communicate with
+		parseSymAssign(node.(*ast.CallExpr), v)
+
 	case *ast.AssignStmt:
 		// Recveive
-		recvStmt, ok := parseRecv(node.(*ast.AssignStmt), v.currentProcId)
-		if ok {
-			v.currentProccess.AddStmt(recvStmt)
-		}
-		decl, ok := parseDeclaration(node.(*ast.AssignStmt), v.inSet, v.currentSet)
-		if ok {
-			v.Declarations.Decls = append(v.Declarations.Decls, decl)
-		}
+		parseRecv(node.(*ast.AssignStmt), v)
+		// New variables declaration
+		parseDeclaration(node.(*ast.AssignStmt), v)
+
 	case *ast.RangeStmt:
 		// For loop
-		parseForLoop(node.(*ast.RangeStmt), v)
-		// don't traverse children
-		return nil
-	case *ast.IfStmt:
-		ifStmt, ok := parseConditional(node.(*ast.IfStmt), v)
+		ok := parseForLoop(node.(*ast.RangeStmt), v)
 		if ok {
-			v.currentProccess.AddStmt(ifStmt)
+			return nil // children were already traversed
+		}
+
+	case *ast.IfStmt:
+		ok := parseConditional(node.(*ast.IfStmt), v)
+		if ok {
 			return nil
 		}
+
 	case *ast.FuncDecl:
 		// symmetric set
 		ok := parseSymSetDecl(node.(*ast.FuncDecl), v)
@@ -155,35 +143,57 @@ func stringRemoveQuotes(s string) string {
 	return s
 }
 
-func getValue(stmt ast.Node) string {
+func getValue(stmt ast.Node, v *IceTVisitor) string {
 	switch stmt.(type) {
 	case *ast.BasicLit:
 		return stringRemoveQuotes(stmt.(*ast.BasicLit).Value)
 	case *ast.Ident:
 		return stringRemoveQuotes(stmt.(*ast.Ident).Name)
 	case *ast.CallExpr:
-		site, ok := stmt.(*ast.CallExpr)
-		if ok {
-			sel, ok := site.Fun.(*ast.SelectorExpr)
-			if ok && sel.Sel.Name == "Get" {
+		site := stmt.(*ast.CallExpr)
+		switch site.Fun.(type) {
+		case *ast.SelectorExpr:
+			sel := site.Fun.(*ast.SelectorExpr)
+			if sel.Sel.Name == "Get" {
 				return sel.X.(*ast.Ident).Name
 			}
+			if sel.Sel.Name == "MyId" {
+				return v.currentProcId
+			}
+			if sel.Sel.Name == "NumPeers" {
+				return fmt.Sprintf("card(%v)", v.currentSet)
+			}
+		case *ast.Ident:
+			ident := site.Fun.(*ast.Ident)
+			if ident.Name == "int" {
+				return getValue(site.Args[0], v)
+			}
+		default:
+			return NDET
 		}
-		return ""
+	case *ast.BinaryExpr:
+		binExp := stmt.(*ast.BinaryExpr)
+		e1 := getValue(binExp.X, v)
+		e2 := getValue(binExp.Y, v)
+		return fmt.Sprintf("%v %v %v", e1, binExp.Op.String(), e2)
 	default:
-		return ""
+		return NDET
 	}
+	return NDET
 }
 
-func parseNewNode(site *ast.CallExpr) (string, bool) {
+func parseNewNode(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "CreateNewNode" {
-			proc := getValue(site.Args[0])
-			return proc, true
+			proc := getValue(site.Args[0], v)
+			v.currentProgram.AddProc(v.currentProccess)
+			if !v.inSet {
+				v.currentProcId = proc
+			}
+			v.currentProccess = icetTerm.NewProcess()
 		}
 	}
-	return "", false
 }
 
 func parseComment(comment *ast.CommentGroup) (string, AnnotatationType) {
@@ -216,7 +226,7 @@ func parseComments(comments []*ast.CommentGroup, annotType AnnotatationType) str
 
 }
 
-func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) {
+func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
 		loopComments := v.Comments.Filter(loopTerm.Body)
@@ -229,31 +239,39 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) {
 		v.Declarations.Append(&lv.Declarations)
 		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: loopVar, Set: v.currentSet, Invariant: invariant, Stmts: *lv.currentProccess}
 		v.currentProccess.AddStmt(&LoopStmt)
+		return true
 	}
+	return false
 }
 
-func parseAssign(site *ast.CallExpr, proc string) (*icetTerm.Assign, bool) {
+func parseAssign(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "Assign" {
 			variable := sel.X.(*ast.Ident).Name
-			value := getValue(site.Args[0])
-			return &icetTerm.Assign{ProcID: proc, Var: variable, Value: value}, true
+			value := getValue(site.Args[0], v)
+			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value})
 		}
 	}
-	return nil, false
 }
 
-func parseSend(site *ast.CallExpr, proc string) (*icetTerm.Send, bool) {
+func parseSend(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "Send" {
-			arg1 := getValue(site.Args[0])
-			arg2 := getValue(site.Args[1])
-			return &icetTerm.Send{ProcID: proc, RecipientID: arg1, Value: arg2}, true
+			arg1 := getValue(site.Args[0], v)
+			arg2 := getValue(site.Args[1], v)
+			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: arg1, Value: arg2})
+
+		}
+		if sel.Sel.Name == "SendPair" {
+			arg1 := getValue(site.Args[0], v)
+			arg2 := getValue(site.Args[1], v)
+			arg3 := getValue(site.Args[2], v)
+			pair := fmt.Sprintf("pair(%v,%v)", arg2, arg3)
+			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: arg1, Value: pair})
 		}
 	}
-	return nil, false
 }
 
 func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
@@ -262,7 +280,7 @@ func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
 		if ok {
 			stmt, ok := stmt.X.(*ast.CallExpr)
 			if ok {
-				set, ok := parseStartSymSet(stmt)
+				set, ok := parseStartSymSet(stmt, v)
 				if ok {
 					sv := makeNewIceTVisitor(v.Comments)
 					sv.currentSet = set.Name
@@ -281,22 +299,21 @@ func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
 	return false
 }
 
-func parseSymAssign(site *ast.CallExpr) (string, bool) {
+func parseSymAssign(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "AssignSymSet" {
-			return getValue(site.Args[0]), true
+			v.currentSet = getValue(site.Args[0], v)
 		}
 	}
-	return "", false
 }
 
-func parseStartSymSet(site *ast.CallExpr) (*icetTerm.SymSet, bool) {
+func parseStartSymSet(site *ast.CallExpr, v *IceTVisitor) (*icetTerm.SymSet, bool) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "StartSymSet" {
-			procVar := strings.ToUpper(getValue(site.Args[1]))
-			setName := getValue(site.Args[0])
+			procVar := strings.ToUpper(getValue(site.Args[1], v))
+			setName := getValue(site.Args[0], v)
 			set := icetTerm.SymSet{ProcVar: procVar, Name: setName, Stmts: *icetTerm.NewProcess()}
 			return &set, true
 		}
@@ -304,54 +321,64 @@ func parseStartSymSet(site *ast.CallExpr) (*icetTerm.SymSet, bool) {
 	return nil, false
 }
 
-func parseDeclaration(assign *ast.AssignStmt, inSet bool, setName string) (string, bool) {
+func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 	if len(assign.Rhs) == 1 {
 		site, ok := assign.Rhs[0].(*ast.CallExpr)
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
 				if sel.Sel.Name == "NewVar" {
-					varName := assign.Lhs[0].(*ast.Ident).Name
-					if inSet {
-						return fmt.Sprintf("decl(%v, map(set(%v), int))", varName, setName), true
+					varName := getValue(assign.Lhs[0], v)
+					if v.inSet {
+						decl := fmt.Sprintf("decl(%v, map(set(%v), int))", varName, v.currentSet)
+						v.Declarations.Decls = append(v.Declarations.Decls, decl)
 					}
-					return fmt.Sprintf("decl(%v, int)", varName), true
+					decl := fmt.Sprintf("decl(%v, int)", varName)
+					v.Declarations.Decls = append(v.Declarations.Decls, decl)
 				}
 			}
 		}
 	}
-	return "", false
 }
 
-func parseRecv(assign *ast.AssignStmt, proc string) (*icetTerm.Recv, bool) {
+func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 	if len(assign.Rhs) == 1 {
 		site, ok := assign.Rhs[0].(*ast.CallExpr)
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
-				arg1 := assign.Lhs[0].(*ast.Ident).Name
+				arg1 := getValue(assign.Lhs[0], v)
 				if sel.Sel.Name == "Recv" {
-					return &icetTerm.Recv{ProcID: proc, Variable: arg1, IsRecvFrom: false}, true
-				} else if sel.Sel.Name == "RecvFrom" {
-					id := site.Args[0].(*ast.Ident).Name
-					return &icetTerm.Recv{ProcID: proc, Variable: arg1, FromId: id, IsRecvFrom: true}, true
+					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.currentProcId, Variable: arg1, IsRecvFrom: false})
+				}
+				if sel.Sel.Name == "RecvFrom" {
+					id := getValue(site.Args[0], v)
+					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.currentProcId, Variable: arg1, FromId: id, IsRecvFrom: true})
+				}
+				if sel.Sel.Name == "RecvPair" {
+					l := getValue(assign.Lhs[0], v)
+					r := getValue(assign.Lhs[1], v)
+					pair := fmt.Sprintf("pair(%v,%v)", l, r)
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
+					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.currentProcId, Variable: pair, IsRecvFrom: false})
+				}
+				if sel.Sel.Name == "RecvPairFrom" {
+					l := getValue(assign.Lhs[0], v)
+					r := getValue(assign.Lhs[1], v)
+					pair := fmt.Sprintf("pair(%v,%v)", l, r)
+					id := getValue(site.Args[0], v)
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
+					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.currentProcId, Variable: pair, FromId: id, IsRecvFrom: true})
 				}
 			}
 		}
 	}
-	return nil, false
-
 }
 
-/*
-ProcID string
-Cond   string
-Left   Process
-Right  Process
-*/
-
 // parsing conditionals
-func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) (*icetTerm.Conditional, bool) {
+func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	//parse condition
 	cond := parseCondition(ifStmt.Cond, v)
 	// parse left subexpression
@@ -369,9 +396,11 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) (*icetTerm.Conditional
 		rightproc = icetTerm.NewProcess()
 	}
 	if !vl.currentProccess.IsEmpty() {
-		return &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}, true
+		ifStmt := &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}
+		v.currentProccess.AddStmt(ifStmt)
+		return true
 	}
-	return nil, false
+	return false
 }
 
 func parseCondition(cond ast.Expr, v *IceTVisitor) string {
@@ -383,14 +412,29 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 		if binExp.Op.String() == "==" {
 			return fmt.Sprintf("%v=%v", left, right)
 		}
+		return fmt.Sprintf("%v%v%v", left, binExp.Op.String(), right)
+
 	default:
-		val := getValue(cond)
-		if v.inSet && !isInt(val) {
+		val := getValue(cond, v)
+		if v.inSet && isIdentifier(val) {
 			val = fmt.Sprintf("ref(%v,%v)", val, v.currentProcId)
 		}
 		return val
 	}
-	return "ndet"
+}
+
+// helper functions for parsing
+
+func isIdentifier(s string) bool {
+	if s == NDET {
+		return false
+	}
+	for _, c := range s {
+		if !unicode.IsLetter(c) {
+			return false
+		}
+	}
+	return true
 }
 
 func isInt(s string) bool {

@@ -17,7 +17,7 @@ type RPCPair struct {
 }
 
 type Node struct {
-	Id        int
+	id        int
 	N         int // number of connections
 	IsServer  bool
 	AddrList  []string // array with the IP:port addresses
@@ -54,6 +54,14 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 	return n
 }
 
+func (n *Node) NumPeers() int {
+	return n.N
+}
+
+func (n *Node) MyId() int32 {
+	return int32(n.id)
+}
+
 func makePeerIds(N int) []int {
 	ids := make([]int, N)
 	for i := range ids {
@@ -79,7 +87,7 @@ func (n *Node) Connect() {
 					time.Sleep(1e9)
 				}
 			}
-			binary.LittleEndian.PutUint32(bs, uint32(n.Id))
+			binary.LittleEndian.PutUint32(bs, uint32(n.id))
 			if _, err := n.Peers[i].Write(bs); err != nil {
 				fmt.Println("Write id error:", err)
 				continue
@@ -89,7 +97,7 @@ func (n *Node) Connect() {
 		}
 	}
 	//<-done
-	log.Printf("Replica id: %d. Done connecting.\n", n.Id)
+	log.Printf("Replica id: %d. Done connecting.\n", n.id)
 	n.Connected <- true
 	// listen for messages from each peer node
 	for rid, reader := range n.Readers {
@@ -101,11 +109,9 @@ func (n *Node) Connect() {
 func (n *Node) waitForConnections() { //done chan bool) {
 	var b [4]byte
 	bs := b[:4]
-	fmt.Printf("waiting for peer connections at address %v\n", n.MyAddr)
 	n.Listener, _ = net.Listen("tcp", n.MyAddr)
 	for i := 0; i < n.N; i++ {
 		conn, err := n.Listener.Accept()
-		fmt.Printf("connection from %vth peer \n", i)
 		if err != nil {
 			fmt.Println("Accept error:", err)
 			continue
@@ -114,14 +120,13 @@ func (n *Node) waitForConnections() { //done chan bool) {
 			fmt.Println("Connection error:", err)
 			continue
 		}
-		id := int32(binary.LittleEndian.Uint32(bs))
-		fmt.Println("Connection established for replica:", id)
+		//id := int32(binary.LittleEndian.Uint32(bs))
 		n.Peers[i] = conn
 		n.Readers[i] = bufio.NewReader(conn)
 		n.Writers[i] = bufio.NewWriter(conn)
 	}
 	//done <- true
-	fmt.Printf("Replica id: %d. Done connecting to peers\n", n.Id)
+	//fmt.Printf("Replica id: %d. Done connecting to peers\n", n.Id)
 }
 
 func (n *Node) msgListener(id int, reader *bufio.Reader) {
