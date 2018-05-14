@@ -67,7 +67,7 @@ func (v *IntVar) New() fastrpc.Serializable {
 }
 
 //-- Pairs
-func MakePair(l *IntVar, r *IntVar) *IntPair {
+func makePair(l *IntVar, r *IntVar) *IntPair {
 	return &IntPair{L: l, R: r}
 }
 
@@ -113,19 +113,19 @@ func (p *IntPair) New() fastrpc.Serializable {
 
 //---- Maps
 type Map struct {
-	thisMap map[int]int
+	thisMap map[int32]int32
 }
 
 func NewMap() Map {
-	thisMap := make(map[int]int)
+	thisMap := make(map[int32]int32)
 	return Map{thisMap: thisMap}
 }
 
-func (m *Map) Put(key int, val int) {
+func (m *Map) Put(key int32, val int32) {
 	m.thisMap[key] = val
 }
 
-func (m *Map) Get(key int) int {
+func (m *Map) Get(key int32) int32 {
 	return m.thisMap[key]
 }
 
@@ -189,14 +189,18 @@ func (n *ChaiNode) recvAll(chans []chan fastrpc.Serializable) fastrpc.Serializab
 	for i, ch := range chans {
 		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
-	chosen, msg, _ := reflect.Select(cases)
-	fmt.Printf("received msg from %v\n", chosen)
+	_, msg, _ := reflect.Select(cases)
 	return msg.Interface().(fastrpc.Serializable)
 }
 
 func (n *ChaiNode) Recv() *IntVar {
 	msg := n.recvAll(n.intChans)
 	return msg.(*IntVar)
+}
+
+func (n *ChaiNode) SendPair(id int, l *IntVar, r *IntVar) {
+	pair := makePair(l, r)
+	n.Send(id, pair)
 }
 
 func (n *ChaiNode) RecvPair() (*IntVar, *IntVar) {
