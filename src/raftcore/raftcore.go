@@ -13,15 +13,12 @@ var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaul
 func main() {
 	flag.Parse()
 	peerAddresses := flag.Args()
-	//fmt.Printf("Peer addresses: %v\n", peerAddresses)
 	doneFollower := make(chan bool, 1)
 	doneCandidate := make(chan bool, 1)
 	go runFollower(peerAddresses, doneFollower)
 	go runCandidate(peerAddresses, term, doneCandidate)
 	// wait for follower and candidate to finish
-	//fmt.Printf("main: waiting for follower.\n")
 	<-doneFollower
-	//fmt.Printf("main: waiting for candidate.\n")
 	<-doneCandidate
 	//fmt.Printf("done.\n")
 }
@@ -38,7 +35,6 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	// Initializations
 	leader.Assign(0)
 	count.Assign(0)
-	//term.ReadIO()
 	term.Assign(int32(*termArg))
 	// part of symmetric set "cs"
 	n.StartSymSet("cs", "c")
@@ -46,10 +42,8 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	for Peer := range n.PeerIds {
 		// {-@ invariant: true -@}
 		// send proposal to follower
-		//fmt.Printf("Candidate: sending request for id %v and term %v to %v:\n", id.Get(), term.Get(), Peer)
 		n.SendPair(Peer, id, term)
 		vote = n.RecvFrom(Peer)
-		//fmt.Printf("Candidate: received vote: %v\n", vote.Get())
 		if vote.Get() == 1 {
 			count.Assign(count.Get() + 1)
 		}
@@ -57,14 +51,12 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	if 2*int(count.Get()) > n.NumPeers() {
 		leader.Assign(1)
 	}
-	//fmt.Printf("received %v votes\n", leader.Get())
 	if leader.Get() == 1 {
 		fmt.Printf("I'm the leader for term %v!!", term.Get())
 	} else {
 		fmt.Printf("Not the leader in term %v.", term.Get())
 	}
 	// --end
-	//fmt.Printf("candidate: done.. shutting down.\n")
 	n.Shutdown()
 	done <- true
 }
@@ -84,24 +76,22 @@ func runFollower(peerAddresses []string, done chan bool) {
 	for _ = range n.PeerIds {
 		// {-@ invariant: true -@}
 		myVote.Assign(0)
-		id, t := n.RecvPair()
-		//fmt.Printf("follower: received request for id %v and term %v \n", id.Get(), t.Get())
+		resID, t := n.RecvPair()
 		// proceed if the request is not outdated
 		if t.Get() > myTerm.Get() {
 			myTerm.Assign(t.Get())
 			voted.Assign(0)
 			votedFor.Assign(0)
 		}
-		if t.Get() >= myTerm.Get() && (voted.Get() == 0 || votedFor.Get() == id.Get()) {
+		if t.Get() >= myTerm.Get() && (voted.Get() == 0 || votedFor.Get() == resID.Get()) {
 			voted.Assign(1)
-			votedFor.Assign(id.Get())
-			votes.Put(myTerm.Get(), id.Get())
+			votedFor.Assign(resID.Get())
+			//assign(F, votes, upd(votes, myTerm, resId))
+			votes.Put(myTerm.Get(), resID.Get())
 			myVote.Assign(1)
 		}
-		//fmt.Printf("follower: round %v, casting vote %v for %v\n", i, myVote.Get(), id.Get())
-		n.Send(int(id.Get()), myVote)
+		n.Send(int(resID.Get()), myVote)
 	}
-	//fmt.Printf("follower: done.. shutting down.\n")
 	n.Shutdown()
 	done <- true
 	//--end
