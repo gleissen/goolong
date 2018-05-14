@@ -185,7 +185,7 @@ func (n *ChaiNode) Send(id int, msg fastrpc.Serializable) {
 
 // receive from any peer
 func (n *ChaiNode) recvAll(chans []chan fastrpc.Serializable) fastrpc.Serializable {
-	cases := make([]reflect.SelectCase, n.N)
+	cases := make([]reflect.SelectCase, n.NumPeers())
 	for i, ch := range chans {
 		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}

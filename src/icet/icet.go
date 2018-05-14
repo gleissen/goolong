@@ -168,14 +168,17 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 			if ident.Name == "int" {
 				return getValue(site.Args[0], v)
 			}
+			return ident.Name
 		default:
 			return NDET
 		}
+
 	case *ast.BinaryExpr:
 		binExp := stmt.(*ast.BinaryExpr)
 		e1 := getValue(binExp.X, v)
 		e2 := getValue(binExp.Y, v)
 		return fmt.Sprintf("%v %v %v", e1, binExp.Op.String(), e2)
+
 	default:
 		return NDET
 	}
@@ -235,6 +238,7 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 		loopVar = strings.ToUpper(loopVar)
 		lv := makeNewIceTVisitor(v.Comments)
 		lv.currentProcId = v.currentProcId
+		lv.inSet = v.inSet
 		ast.Walk(lv, loopTerm.Body)
 		v.Declarations.Append(&lv.Declarations)
 		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: loopVar, Set: v.currentSet, Invariant: invariant, Stmts: *lv.currentProccess}
@@ -247,10 +251,18 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 func parseAssign(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
+		// variable.Assign(value)
 		if sel.Sel.Name == "Assign" {
-			variable := sel.X.(*ast.Ident).Name
+			variable := getValue(sel.X, v)
 			value := getValue(site.Args[0], v)
-			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value})
+			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value, IsMap: false})
+			// _map.Put(key,value)
+		} else if sel.Sel.Name == "Put" {
+			_map := getValue(sel.X, v)
+			key := getValue(site.Args[0], v)
+			value := getValue(site.Args[1], v)
+			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: _map, Value: value, Key: key, IsMap: true})
+
 		}
 	}
 }
@@ -327,14 +339,26 @@ func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
+				varName := getValue(assign.Lhs[0], v)
+				var varType = "unknown"
+				ok := false
+				// switch variable type
 				if sel.Sel.Name == "NewVar" {
-					varName := getValue(assign.Lhs[0], v)
+					varType = "int"
+					ok = true
+				} else if sel.Sel.Name == "NewMap" {
+					varType = "map(int, int)"
+					ok = true
+				}
+				// if found, add assignment
+				if ok {
 					if v.inSet {
-						decl := fmt.Sprintf("decl(%v, map(set(%v), int))", varName, v.currentSet)
+						decl := fmt.Sprintf("decl(%v, map(set(%v), %v))", varName, v.currentSet, varType)
+						v.Declarations.Decls = append(v.Declarations.Decls, decl)
+					} else {
+						decl := fmt.Sprintf("decl(%v, %v)", varName, varType)
 						v.Declarations.Decls = append(v.Declarations.Decls, decl)
 					}
-					decl := fmt.Sprintf("decl(%v, int)", varName)
-					v.Declarations.Decls = append(v.Declarations.Decls, decl)
 				}
 			}
 		}
@@ -380,16 +404,19 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 // parsing conditionals
 func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	//parse condition
+	var vr *IceTVisitor
 	cond := parseCondition(ifStmt.Cond, v)
 	// parse left subexpression
 	vl := makeNewIceTVisitor(v.Comments)
 	vl.currentProcId = v.currentProcId
+	vl.inSet = v.inSet
 	ast.Walk(vl, ifStmt.Body)
 	// parse right subexpression
 	var rightproc *icetTerm.Process
 	if ifStmt.Else != nil {
-		vr := makeNewIceTVisitor(v.Comments)
+		vr = makeNewIceTVisitor(v.Comments)
 		vr.currentProcId = v.currentProcId
+		vr.inSet = v.inSet
 		ast.Walk(vr, ifStmt.Else)
 		rightproc = vr.currentProccess
 	} else {
@@ -398,6 +425,10 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	if !vl.currentProccess.IsEmpty() {
 		ifStmt := &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}
 		v.currentProccess.AddStmt(ifStmt)
+		v.Declarations.Append(&vl.Declarations)
+		if vr != nil {
+			v.Declarations.Append(&vr.Declarations)
+		}
 		return true
 	}
 	return false
@@ -409,11 +440,23 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 		binExp := cond.(*ast.BinaryExpr)
 		left := parseCondition(binExp.X, v)
 		right := parseCondition(binExp.Y, v)
+		// equality
 		if binExp.Op.String() == "==" {
 			return fmt.Sprintf("%v=%v", left, right)
 		}
+		// and
+		if binExp.Op.String() == "&&" {
+			return fmt.Sprintf("and([%v,%v])", left, right)
+		}
+		// or
+		if binExp.Op.String() == "||" {
+			return fmt.Sprintf("or([%v,%v])", left, right)
+		}
 		return fmt.Sprintf("%v%v%v", left, binExp.Op.String(), right)
-
+	case *ast.ParenExpr:
+		parenExp := cond.(*ast.ParenExpr)
+		exp := parseCondition(parenExp.X, v)
+		return fmt.Sprintf("(%v)", exp)
 	default:
 		val := getValue(cond, v)
 		if v.inSet && isIdentifier(val) {

@@ -30,7 +30,9 @@ type Declarations struct {
 type Assign struct {
 	ProcID string
 	Var    string
+	Key    string
 	Value  string
+	IsMap  bool
 }
 
 type Send struct {
@@ -95,10 +97,16 @@ func (d *Declarations) Append(d1 *Declarations) {
 
 // Assign statements
 func (a *Assign) PrettyPrint() string {
+	if a.IsMap {
+		return fmt.Sprintf("%v: %v[%v]:=%v", a.ProcID, a.Var, a.Key, a.Value)
+	}
 	return fmt.Sprintf("%v: %v:=%v", a.ProcID, a.Var, a.Value)
 }
 
 func (a *Assign) PrintIceT() string {
+	if a.IsMap {
+		return fmt.Sprintf("assign(%v,%v,upd(%v,%v,%v))", a.ProcID, a.Var, a.Var, a.Key, a.Value)
+	}
 	return fmt.Sprintf("assign(%v,%v,%v)", a.ProcID, a.Var, a.Value)
 }
 

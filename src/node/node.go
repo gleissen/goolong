@@ -18,7 +18,7 @@ type RPCPair struct {
 
 type Node struct {
 	id        int
-	N         int // number of connections
+	numPeers  int // number of connections
 	IsServer  bool
 	AddrList  []string // array with the IP:port addresses
 	MyAddr    string
@@ -55,7 +55,7 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 }
 
 func (n *Node) NumPeers() int {
-	return n.N
+	return n.numPeers
 }
 
 func (n *Node) MyId() int32 {
@@ -78,7 +78,7 @@ func (n *Node) Connect() {
 		var b [4]byte
 		bs := b[:4]
 		//connect to peers
-		for i := 0; i < n.N; i++ {
+		for i := 0; i < n.numPeers; i++ {
 			for done := false; !done; {
 				if conn, err := net.Dial("tcp", n.AddrList[i]); err == nil {
 					n.Peers[i] = conn
@@ -110,7 +110,7 @@ func (n *Node) waitForConnections() { //done chan bool) {
 	var b [4]byte
 	bs := b[:4]
 	n.Listener, _ = net.Listen("tcp", n.MyAddr)
-	for i := 0; i < n.N; i++ {
+	for i := 0; i < n.numPeers; i++ {
 		conn, err := n.Listener.Accept()
 		if err != nil {
 			fmt.Println("Accept error:", err)
