@@ -32,6 +32,7 @@ type IceTVisitor struct {
 	currentProgram  *icetTerm.Program
 	currentProccess *icetTerm.Process
 	currentSet      string
+	currentIDType   icetTerm.IDType
 	inSet           bool
 	IceTTerm        string
 	Comments        ast.CommentMap
@@ -60,6 +61,7 @@ func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
 		icetTerm.NewProgram(),
 		icetTerm.NewProcess(),
 		"",
+		icetTerm.Pid,
 		false,
 		"",
 		comments,
@@ -144,6 +146,7 @@ func stringRemoveQuotes(s string) string {
 }
 
 func getValue(stmt ast.Node, v *IceTVisitor) string {
+	v.currentIDType = icetTerm.Pid
 	switch stmt.(type) {
 	case *ast.BasicLit:
 		return stringRemoveQuotes(stmt.(*ast.BasicLit).Value)
@@ -155,6 +158,7 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 		case *ast.SelectorExpr:
 			sel := site.Fun.(*ast.SelectorExpr)
 			if sel.Sel.Name == "Get" {
+				v.currentIDType = icetTerm.Variable
 				return sel.X.(*ast.Ident).Name
 			}
 			if sel.Sel.Name == "MyId" {
@@ -165,7 +169,7 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 			}
 		case *ast.Ident:
 			ident := site.Fun.(*ast.Ident)
-			if ident.Name == "int" {
+			if ident.Name == "int" || ident.Name == "int32" {
 				return getValue(site.Args[0], v)
 			}
 			return ident.Name
@@ -239,6 +243,7 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 		lv := makeNewIceTVisitor(v.Comments)
 		lv.currentProcId = v.currentProcId
 		lv.inSet = v.inSet
+		lv.currentSet = v.currentSet
 		ast.Walk(lv, loopTerm.Body)
 		v.Declarations.Append(&lv.Declarations)
 		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: loopVar, Set: v.currentSet, Invariant: invariant, Stmts: *lv.currentProccess}
@@ -262,7 +267,6 @@ func parseAssign(site *ast.CallExpr, v *IceTVisitor) {
 			key := getValue(site.Args[0], v)
 			value := getValue(site.Args[1], v)
 			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: _map, Value: value, Key: key, IsMap: true})
-
 		}
 	}
 }
@@ -271,17 +275,17 @@ func parseSend(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "Send" {
-			arg1 := getValue(site.Args[0], v)
-			arg2 := getValue(site.Args[1], v)
-			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: arg1, Value: arg2})
+			val := getValue(site.Args[1], v)
+			recp := getValue(site.Args[0], v)
+			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: recp, RecipientType: v.currentIDType, Value: val})
 
 		}
 		if sel.Sel.Name == "SendPair" {
-			arg1 := getValue(site.Args[0], v)
-			arg2 := getValue(site.Args[1], v)
-			arg3 := getValue(site.Args[2], v)
-			pair := fmt.Sprintf("pair(%v,%v)", arg2, arg3)
-			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: arg1, Value: pair})
+			l := getValue(site.Args[1], v)
+			r := getValue(site.Args[2], v)
+			recp := getValue(site.Args[0], v)
+			pair := fmt.Sprintf("pair(%v,%v)", l, r)
+			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: recp, Value: pair})
 		}
 	}
 }
@@ -383,8 +387,13 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 					l := getValue(assign.Lhs[0], v)
 					r := getValue(assign.Lhs[1], v)
 					pair := fmt.Sprintf("pair(%v,%v)", l, r)
-					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
-					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
+					if v.inSet {
+						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, map(set(%v), int))", l, v.currentSet))
+						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, map(set(%v), int))", r, v.currentSet))
+					} else {
+						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
+						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
+					}
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.currentProcId, Variable: pair, IsRecvFrom: false})
 				}
 				if sel.Sel.Name == "RecvPairFrom" {

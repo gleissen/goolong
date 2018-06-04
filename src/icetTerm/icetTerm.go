@@ -9,6 +9,13 @@ const PROC_SIZE = 5
 const STMT_SIZE = 20
 const SKIP = "skip"
 
+type IDType int
+
+const (
+	Pid      IDType = iota
+	Variable        = iota
+)
+
 type IcetTerm interface {
 	PrettyPrint() string
 	PrintIceT() string
@@ -36,9 +43,10 @@ type Assign struct {
 }
 
 type Send struct {
-	ProcID      string
-	RecipientID string
-	Value       string
+	ProcID        string
+	RecipientID   string
+	Value         string
+	RecipientType IDType
 }
 
 type Recv struct {
@@ -116,7 +124,10 @@ func (s *Send) PrettyPrint() string {
 }
 
 func (s *Send) PrintIceT() string {
-	return fmt.Sprintf("send(%v, e_pid(%v), %v)", s.ProcID, s.RecipientID, s.Value)
+	if s.RecipientType == Pid {
+		return fmt.Sprintf("send(%v, e_pid(%v), %v)", s.ProcID, s.RecipientID, s.Value)
+	}
+	return fmt.Sprintf("send(%v, e_var(%v), %v)", s.ProcID, s.RecipientID, s.Value)
 }
 
 // Receive statements
@@ -141,6 +152,9 @@ func (l *ForLoop) PrettyPrint() string {
 }
 
 func (l *ForLoop) PrintIceT() string {
+	if l.Invariant == "" {
+		return fmt.Sprintf("for(%v, %v, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrintIceT())
+	}
 	return fmt.Sprintf("for(%v, %v, %v, rr, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
 }
 

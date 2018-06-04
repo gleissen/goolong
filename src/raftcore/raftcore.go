@@ -31,17 +31,17 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	vote := gochai.NewVar()
 	count := gochai.NewVar()
 	leader := gochai.NewVar()
-	id.Assign(n.MyId())
 	// Initializations
 	leader.Assign(0)
 	count.Assign(0)
 	term.Assign(int32(*termArg))
 	// part of symmetric set "cs"
 	n.StartSymSet("cs", "c")
+	n.AssignSymSet("fs", "")
 	// -- begin protocol
 	for Peer := range n.PeerIds {
-		// {-@ invariant: true -@}
 		// send proposal to follower
+		id.Assign(n.MyId())
 		n.SendPair(Peer, id, term)
 		vote = n.RecvFrom(Peer)
 		if vote.Get() == 1 {
@@ -72,9 +72,9 @@ func runFollower(peerAddresses []string, done chan bool) {
 	myTerm.Assign(-1)
 	voted.Assign(0)
 	n.StartSymSet("fs", "f")
+	n.AssignSymSet("cs", "")
 	// -- begin protocol
 	for _ = range n.PeerIds {
-		// {-@ invariant: true -@}
 		myVote.Assign(0)
 		resID, t := n.RecvPair()
 		// proceed if the request is not outdated
@@ -90,6 +90,7 @@ func runFollower(peerAddresses []string, done chan bool) {
 			votes.Put(myTerm.Get(), resID.Get())
 			myVote.Assign(1)
 		}
+
 		n.Send(int(resID.Get()), myVote)
 	}
 	n.Shutdown()
