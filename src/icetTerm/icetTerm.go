@@ -299,6 +299,8 @@ func (a *Annotation) PrintIceT() string {
 		return fmt.Sprintf("pre(%v, %v)", a.ProcID, a.Annot)
 	case Assume:
 		return fmt.Sprintf("assume(%v, %v)", a.ProcID, a.Annot)
+	case Prop:
+		return a.Annot
 	}
 	return ""
 }
@@ -312,15 +314,18 @@ func (as *AnnotationSet) PrettyPrint() string {
 }
 
 func (as *AnnotationSet) PrintIceT() string {
-	var s []string
-	for _, a := range as.Annots {
-		s = append(s, a.PrintIceT())
+	if len(as.Annots) > 0 {
+		var s []string
+		for _, a := range as.Annots {
+			s = append(s, a.PrintIceT())
+		}
+		return strings.Join(s, ",")
 	}
-	return strings.Join(s, ",")
+	return ""
 }
 
 func NewAnnotationSet() *AnnotationSet {
-	return &AnnotationSet{Annots: make([]Annotation, ANNOT_SIZE)}
+	return &AnnotationSet{Annots: make([]Annotation, 0)}
 }
 
 func (as *AnnotationSet) Add(a ...Annotation) {

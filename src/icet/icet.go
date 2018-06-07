@@ -36,6 +36,7 @@ type IceTVisitor struct {
 	Comments        ast.CommentMap
 	Property        string
 	Declarations    icetTerm.Declarations
+	fileSet         *token.FileSet
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -54,7 +55,7 @@ func (v *IceTVisitor) MakeIceTTerm() string {
 	return fmt.Sprintf("prog(raftcore, %v, ensures(%v), %v)", v.Declarations.PrintIceT(), v.Property, v.IceTTerm)
 }
 
-func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
+func makeNewIceTVisitor(comments ast.CommentMap, fileSet *token.FileSet) *IceTVisitor {
 	v := &IceTVisitor{"",
 		icetTerm.NewProgram(),
 		icetTerm.NewProcess(),
@@ -64,7 +65,8 @@ func makeNewIceTVisitor(comments ast.CommentMap) *IceTVisitor {
 		"",
 		comments,
 		"",
-		icetTerm.Declarations{Decls: make([]string, 0)}}
+		icetTerm.Declarations{Decls: make([]string, 0)},
+		fileSet}
 	return v
 }
 
@@ -82,7 +84,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	v := makeNewIceTVisitor(comments)
+	v := makeNewIceTVisitor(comments, fset)
 	propertySet := parseComments(comments.Comments(), v.currentProcId, PropertyTypes)
 	v.Property = propertySet.PrintIceT()
 	ast.Walk(v, node)
@@ -92,27 +94,20 @@ func main() {
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 
-	parseAnnotations(node, v)
-
 	switch node.(type) {
+	case *ast.ExprStmt:
+		parseAssign(node.(*ast.ExprStmt), v)
+
 	case *ast.CallExpr:
-		// Send
 		parseSend(node.(*ast.CallExpr), v)
-		// New Node
 		parseNewNode(node.(*ast.CallExpr), v)
-		// Assignments
-		parseAssign(node.(*ast.CallExpr), v)
-		// Assigning a symmetric proccess to communicate with
 		parseSymAssign(node.(*ast.CallExpr), v)
 
 	case *ast.AssignStmt:
-		// Recveive
 		parseRecv(node.(*ast.AssignStmt), v)
-		// New variables declaration
 		parseDeclaration(node.(*ast.AssignStmt), v)
 
 	case *ast.RangeStmt:
-		// For loop
 		ok := parseForLoop(node.(*ast.RangeStmt), v)
 		if ok {
 			return nil // children were already traversed
@@ -125,7 +120,6 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 		}
 
 	case *ast.FuncDecl:
-		// symmetric set
 		ok := parseSymSetDecl(node.(*ast.FuncDecl), v)
 		if ok {
 			return nil
@@ -144,6 +138,11 @@ func stringRemoveQuotes(s string) string {
 		}
 	}
 	return s
+}
+
+func getLineNumber(v *IceTVisitor, pos token.Pos) int {
+	file := v.fileSet.File(pos)
+	return file.Position(pos).Line
 }
 
 func getValue(stmt ast.Node, v *IceTVisitor) string {
@@ -194,7 +193,10 @@ func parseAnnotations(stmt ast.Node, v *IceTVisitor) {
 	if stmt != nil {
 		comments := v.Comments.Filter(stmt)
 		annots := parseComments(comments.Comments(), v.currentProcId, AnnotTypes)
-		v.currentProccess.AddStmt(annots)
+		if len(annots.Annots) > 0 {
+			fmt.Printf("adding annots:%v\n", annots.PrintIceT())
+			v.currentProccess.AddStmt(annots)
+		}
 	}
 }
 
@@ -267,7 +269,7 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 		invariant := invariantSet.PrintIceT()
 		loopVar := loopTerm.Key.(*ast.Ident).Name
 		loopVar = strings.ToUpper(loopVar)
-		lv := makeNewIceTVisitor(v.Comments)
+		lv := makeNewIceTVisitor(v.Comments, v.fileSet)
 		lv.currentProcId = v.currentProcId
 		lv.inSet = v.inSet
 		lv.currentSet = v.currentSet
@@ -280,22 +282,31 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	return false
 }
 
-func parseAssign(site *ast.CallExpr, v *IceTVisitor) {
-	sel, ok := site.Fun.(*ast.SelectorExpr)
+func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
+	site, ok := expr.X.(*ast.CallExpr)
 	if ok {
-		// variable.Assign(value)
-		if sel.Sel.Name == "Assign" {
-			variable := getValue(sel.X, v)
-			value := getValue(site.Args[0], v)
-			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value, IsMap: false})
-			// _map.Put(key,value)
-		} else if sel.Sel.Name == "Put" {
-			_map := getValue(sel.X, v)
-			key := getValue(site.Args[0], v)
-			value := getValue(site.Args[1], v)
-			v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: _map, Value: value, Key: key, IsMap: true})
+		sel, ok := site.Fun.(*ast.SelectorExpr)
+		if ok {
+			// variable.Assign(value)
+			if sel.Sel.Name == "Assign" {
+				fmt.Printf("parsing annotations for node at line: %v\n", getLineNumber(v, site.Pos()))
+				parseAnnotations(expr, v)
+				variable := getValue(sel.X, v)
+				value := getValue(site.Args[0], v)
+				v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value, IsMap: false})
+				return true
+				// _map.Put(key,value)
+			} else if sel.Sel.Name == "Put" {
+				parseAnnotations(expr, v)
+				_map := getValue(sel.X, v)
+				key := getValue(site.Args[0], v)
+				value := getValue(site.Args[1], v)
+				v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: _map, Value: value, Key: key, IsMap: true})
+				return true
+			}
 		}
 	}
+	return false
 }
 
 func parseSend(site *ast.CallExpr, v *IceTVisitor) {
@@ -305,7 +316,6 @@ func parseSend(site *ast.CallExpr, v *IceTVisitor) {
 			val := getValue(site.Args[1], v)
 			recp := getValue(site.Args[0], v)
 			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.currentProcId, RecipientID: recp, RecipientType: v.currentIDType, Value: val})
-
 		}
 		if sel.Sel.Name == "SendPair" {
 			l := getValue(site.Args[1], v)
@@ -325,7 +335,7 @@ func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
 			if ok {
 				set, ok := parseStartSymSet(stmt, v)
 				if ok {
-					sv := makeNewIceTVisitor(v.Comments)
+					sv := makeNewIceTVisitor(v.Comments, v.fileSet)
 					sv.currentSet = set.Name
 					sv.inSet = true
 					sv.currentProcId = set.ProcVar
@@ -443,14 +453,14 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	var vr *IceTVisitor
 	cond := parseCondition(ifStmt.Cond, v)
 	// parse left subexpression
-	vl := makeNewIceTVisitor(v.Comments)
+	vl := makeNewIceTVisitor(v.Comments, v.fileSet)
 	vl.currentProcId = v.currentProcId
 	vl.inSet = v.inSet
 	ast.Walk(vl, ifStmt.Body)
 	// parse right subexpression
 	var rightproc *icetTerm.Process
 	if ifStmt.Else != nil {
-		vr = makeNewIceTVisitor(v.Comments)
+		vr = makeNewIceTVisitor(v.Comments, v.fileSet)
 		vr.currentProcId = v.currentProcId
 		vr.inSet = v.inSet
 		ast.Walk(vr, ifStmt.Else)
