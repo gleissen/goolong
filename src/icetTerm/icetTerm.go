@@ -8,8 +8,19 @@ import (
 const PROC_SIZE = 5
 const STMT_SIZE = 20
 const SKIP = "skip"
+const ANNOT_SIZE = 5
 
 type IDType int
+
+type AnnotatationType int
+
+const ( // annotation types
+	Inv    AnnotatationType = iota
+	Prop                    = iota // property
+	Pre                     = iota // precondition
+	Assume                  = iota // assumtpion
+	None                    = iota
+)
 
 const (
 	Pid      IDType = iota
@@ -77,8 +88,17 @@ type Conditional struct {
 	Right  Process
 }
 
-// Declarations
+type Annotation struct {
+	Annot  string
+	Type   AnnotatationType
+	ProcID string
+}
 
+type AnnotationSet struct {
+	Annots []Annotation
+}
+
+// Declarations
 func (c *Conditional) PrettyPrint() string {
 	return fmt.Sprintf("%v: if %v then %v else %v\n", c.ProcID, c.Cond, c.Left.PrettyPrint(), c.Right.PrettyPrint())
 }
@@ -230,6 +250,10 @@ func (proc *Process) AddStmt(stmt IcetTerm) {
 	proc.stmts = append(proc.stmts, stmt)
 }
 
+func (proc *Process) AddStmts(stmt []IcetTerm) {
+	proc.stmts = append(proc.stmts, stmt...)
+}
+
 func (proc *Process) PrettyPrint() string {
 	var stmts string
 	if len(proc.stmts) > 0 {
@@ -255,4 +279,50 @@ func (proc *Process) PrintIceT() string {
 		stmts = SKIP
 	}
 	return stmts
+}
+
+// Annotations
+
+func (a *Annotation) PrettyPrint() string {
+	switch a.Type {
+	case Pre:
+		return fmt.Sprintf("precondition: %v", a.Annot)
+	case Assume:
+		return fmt.Sprintf("assumption: %v", a.Annot)
+	}
+	return ""
+}
+
+func (a *Annotation) PrintIceT() string {
+	switch a.Type {
+	case Pre:
+		return fmt.Sprintf("pre(%v, %v)", a.ProcID, a.Annot)
+	case Assume:
+		return fmt.Sprintf("assume(%v, %v)", a.ProcID, a.Annot)
+	}
+	return ""
+}
+
+func (as *AnnotationSet) PrettyPrint() string {
+	var s []string
+	for _, a := range as.Annots {
+		s = append(s, a.PrettyPrint())
+	}
+	return strings.Join(s, ",")
+}
+
+func (as *AnnotationSet) PrintIceT() string {
+	var s []string
+	for _, a := range as.Annots {
+		s = append(s, a.PrintIceT())
+	}
+	return strings.Join(s, ",")
+}
+
+func NewAnnotationSet() *AnnotationSet {
+	return &AnnotationSet{Annots: make([]Annotation, ANNOT_SIZE)}
+}
+
+func (as *AnnotationSet) Add(a ...Annotation) {
+	as.Annots = append(as.Annots, a...)
 }
