@@ -30,6 +30,8 @@ type IceTVisitor struct {
 	currentProgram  *icetTerm.Program
 	currentProccess *icetTerm.Process
 	currentSet      string
+	currentPeerSet  string
+	currentPeerID   string
 	currentIDType   icetTerm.IDType
 	inSet           bool
 	IceTTerm        string
@@ -37,6 +39,7 @@ type IceTVisitor struct {
 	Property        string
 	Declarations    icetTerm.Declarations
 	fileSet         *token.FileSet
+	isGhostVar      map[string]bool
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -60,13 +63,16 @@ func makeNewIceTVisitor(comments ast.CommentMap, fileSet *token.FileSet) *IceTVi
 		icetTerm.NewProgram(),
 		icetTerm.NewProcess(),
 		"",
+		"",
+		"",
 		icetTerm.Pid,
 		false,
 		"",
 		comments,
 		"",
 		icetTerm.Declarations{Decls: make([]string, 0)},
-		fileSet}
+		fileSet,
+		make(map[string]bool)}
 	return v
 }
 
@@ -88,7 +94,6 @@ func main() {
 	propertySet := parseComments(comments.Comments(), v.currentProcId, PropertyTypes)
 	v.Property = propertySet.PrintIceT()
 	ast.Walk(v, node)
-	//fmt.Printf("icet: %v.\n\n pretty print:\n%v \n", v.MakeIceTTerm(), v.PrettyPrint())
 	fmt.Printf("%v.", v.MakeIceTTerm())
 }
 
@@ -128,18 +133,6 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	return v
 }
 
-func stringRemoveQuotes(s string) string {
-	if len(s) > 0 {
-		if s[0] == '"' {
-			s = s[1:]
-		}
-		if s[len(s)-1] == '"' {
-			s = s[:len(s)-1]
-		}
-	}
-	return s
-}
-
 func getLineNumber(v *IceTVisitor, pos token.Pos) int {
 	file := v.fileSet.File(pos)
 	return file.Position(pos).Line
@@ -165,7 +158,7 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 				return v.currentProcId
 			}
 			if sel.Sel.Name == "NumPeers" {
-				return fmt.Sprintf("card(%v)", v.currentSet)
+				return fmt.Sprintf("card(%v)", v.currentPeerSet)
 			}
 		case *ast.Ident:
 			ident := site.Fun.(*ast.Ident)
@@ -194,7 +187,6 @@ func parseAnnotations(stmt ast.Node, v *IceTVisitor) {
 		comments := v.Comments.Filter(stmt)
 		annots := parseComments(comments.Comments(), v.currentProcId, AnnotTypes)
 		if len(annots.Annots) > 0 {
-			fmt.Printf("adding annots:%v\n", annots.PrintIceT())
 			v.currentProccess.AddStmt(annots)
 		}
 	}
@@ -252,34 +244,31 @@ func parseComments(comments []*ast.CommentGroup, procId string, annotTypes []ice
 	return annotations
 }
 
-func containsType(_type icetTerm.AnnotatationType, types []icetTerm.AnnotatationType) bool {
-	for _, el := range types {
-		if el == _type {
-			return true
-		}
-	}
-	return false
-}
-
 func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
 		loopComments := v.Comments.Filter(loopTerm.Body)
 		invariantSet := parseComments(loopComments.Comments(), v.currentProcId, InvariantTypes)
 		invariant := invariantSet.PrintIceT()
-		loopVar := loopTerm.Key.(*ast.Ident).Name
-		loopVar = strings.ToUpper(loopVar)
-		lv := makeNewIceTVisitor(v.Comments, v.fileSet)
-		lv.currentProcId = v.currentProcId
-		lv.inSet = v.inSet
-		lv.currentSet = v.currentSet
+		lv := copyVisitor(v)
+		lv.currentPeerID = getValue(loopTerm.Key, v)
 		ast.Walk(lv, loopTerm.Body)
 		v.Declarations.Append(&lv.Declarations)
-		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: loopVar, Set: v.currentSet, Invariant: invariant, Stmts: *lv.currentProccess}
+		LoopStmt := icetTerm.ForLoop{ProcID: v.currentProcId, LoopVar: lv.currentPeerID, Set: v.currentPeerSet, Invariant: invariant, Stmts: *lv.currentProccess}
 		v.currentProccess.AddStmt(&LoopStmt)
 		return true
 	}
 	return false
+}
+
+func copyVisitor(v *IceTVisitor) *IceTVisitor {
+	cp := makeNewIceTVisitor(v.Comments, v.fileSet)
+	cp.currentProcId = v.currentProcId
+	cp.inSet = v.inSet
+	cp.currentSet = v.currentSet
+	cp.currentPeerSet = v.currentPeerSet
+	cp.isGhostVar = v.isGhostVar
+	return cp
 }
 
 func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
@@ -289,7 +278,6 @@ func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
 		if ok {
 			// variable.Assign(value)
 			if sel.Sel.Name == "Assign" {
-				fmt.Printf("parsing annotations for node at line: %v\n", getLineNumber(v, site.Pos()))
 				parseAnnotations(expr, v)
 				variable := getValue(sel.X, v)
 				value := getValue(site.Args[0], v)
@@ -356,7 +344,7 @@ func parseSymAssign(site *ast.CallExpr, v *IceTVisitor) {
 	sel, ok := site.Fun.(*ast.SelectorExpr)
 	if ok {
 		if sel.Sel.Name == "AssignSymSet" {
-			v.currentSet = getValue(site.Args[0], v)
+			v.currentPeerSet = getValue(site.Args[0], v)
 		}
 	}
 }
@@ -390,6 +378,10 @@ func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 				} else if sel.Sel.Name == "NewMap" {
 					varType = "map(int, int)"
 					ok = true
+				} else if sel.Sel.Name == "NewGhostVar" {
+					fmt.Printf("Setting %v to true\n", varName)
+					v.isGhostVar[varName] = true
+					ok = false
 				}
 				// if found, add assignment
 				if ok {
@@ -469,6 +461,7 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 		rightproc = icetTerm.NewProcess()
 	}
 	if !vl.currentProccess.IsEmpty() {
+		parseAnnotations(ifStmt, v)
 		ifStmt := &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}
 		v.currentProccess.AddStmt(ifStmt)
 		v.Declarations.Append(&vl.Declarations)
@@ -490,6 +483,10 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 		if binExp.Op.String() == "==" {
 			return fmt.Sprintf("%v=%v", left, right)
 		}
+		// in-equality
+		if binExp.Op.String() == ">=" {
+			return fmt.Sprintf("%v=<%v", right, left)
+		}
 		// and
 		if binExp.Op.String() == "&&" {
 			return fmt.Sprintf("and([%v,%v])", left, right)
@@ -505,8 +502,15 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 		return fmt.Sprintf("(%v)", exp)
 	default:
 		val := getValue(cond, v)
-		if v.inSet && isIdentifier(val) {
-			val = fmt.Sprintf("ref(%v,%v)", val, v.currentProcId)
+		if v.inSet && isIdentifier(val) && val != v.currentProcId {
+			proc := v.currentProcId
+			// if the variable is a ghost variable shadowing another procs var, use the other proc's id
+			ok := v.isGhostVar[val]
+			fmt.Printf("is %v a ghost var: %v\n", val, ok)
+			if ok {
+				proc = v.currentPeerID
+			}
+			val = fmt.Sprintf("ref(%v,%v)", val, proc)
 		}
 		return val
 	}
@@ -533,4 +537,25 @@ func isInt(s string) bool {
 		}
 	}
 	return true
+}
+
+func stringRemoveQuotes(s string) string {
+	if len(s) > 0 {
+		if s[0] == '"' {
+			s = s[1:]
+		}
+		if s[len(s)-1] == '"' {
+			s = s[:len(s)-1]
+		}
+	}
+	return s
+}
+
+func containsType(_type icetTerm.AnnotatationType, types []icetTerm.AnnotatationType) bool {
+	for _, el := range types {
+		if el == _type {
+			return true
+		}
+	}
+	return false
 }

@@ -28,6 +28,8 @@ type SymSet struct {
 type IntVar struct {
 	thisVar int32
 }
+type GhostVar struct {
+}
 
 type IntPair struct {
 	L *IntVar
@@ -66,6 +68,23 @@ func (v *IntVar) New() fastrpc.Serializable {
 	return new(IntVar)
 }
 
+func NewVar() *IntVar {
+	return &IntVar{thisVar: -1}
+}
+
+// ghost variables
+
+func NewGhostVar() *GhostVar {
+	return &GhostVar{}
+}
+
+func (v *GhostVar) Assign(val int32) { //have no runtime effect
+}
+
+func (v *GhostVar) Get() int32 {
+	return 0
+}
+
 //-- Pairs
 func makePair(l *IntVar, r *IntVar) *IntPair {
 	return &IntPair{L: l, R: r}
@@ -73,10 +92,6 @@ func makePair(l *IntVar, r *IntVar) *IntPair {
 
 func (p *IntPair) Unpack() (*IntVar, *IntVar) {
 	return p.L, p.R
-}
-
-func NewVar() *IntVar {
-	return &IntVar{thisVar: -1}
 }
 
 func (p *IntPair) Marshal(wire io.Writer) {

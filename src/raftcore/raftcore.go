@@ -25,16 +25,25 @@ func main() {
 
 func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
+
+	// -- Assigning sets --
+	// part of symmetric set "cs"
+	n.StartSymSet("cs", "c")
+	// communicates with set "fs"
+	n.AssignSymSet("fs", "")
+
 	// Declaring protocol state
 	term := gochai.NewVar()
 	id := gochai.NewVar()
 	vote := gochai.NewVar()
 	count := gochai.NewVar()
 	isLeader := gochai.NewVar()
+
 	// -- ghost variables
 	// these are used to access follower statements
-	votedFor := gochai.NewVar()
-	myTerm := gochai.NewVar()
+	votedFor := gochai.NewGhostVar()
+	myTerm := gochai.NewGhostVar()
+
 	// cardinalities
 	k := gochai.NewVar() // k=#{f | f.term < c.term}
 	l := gochai.NewVar() // l=#{f | f.term ≥ c.term ∧ f.votes [c.term] = c}
@@ -49,11 +58,6 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	count.Assign(0)
 	term.Assign(int32(*termArg))
 
-	// -- Assigning sets --
-	// part of symmetric set "cs"
-	n.StartSymSet("cs", "c")
-	// communicates with set "fs"
-	n.AssignSymSet("fs", "")
 	// =====================
 	//    Sending Proposals
 	// =====================
@@ -108,6 +112,8 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 
 func runFollower(peerAddresses []string, done chan bool) {
 	n := gochai.CreateNewNode("f", *myID, *myAddr, peerAddresses, false)
+	n.StartSymSet("fs", "f")
+	n.AssignSymSet("cs", "")
 	// Initializations
 	myTerm := gochai.NewVar()
 	voted := gochai.NewVar()
@@ -116,8 +122,6 @@ func runFollower(peerAddresses []string, done chan bool) {
 	votes := gochai.NewMap()
 	myTerm.Assign(-1)
 	voted.Assign(0)
-	n.StartSymSet("fs", "f")
-	n.AssignSymSet("cs", "")
 	// -- begin protocol
 	for _ = range n.PeerIds {
 		myVote.Assign(0)
@@ -131,7 +135,6 @@ func runFollower(peerAddresses []string, done chan bool) {
 		if t.Get() >= myTerm.Get() && (voted.Get() == 0 || votedFor.Get() == resID.Get()) {
 			voted.Assign(1)
 			votedFor.Assign(resID.Get())
-			//assign(F, votes, upd(votes, myTerm, resId))
 			votes.Put(myTerm.Get(), resID.Get())
 			myVote.Assign(1)
 		}
