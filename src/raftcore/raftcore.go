@@ -20,7 +20,6 @@ func main() {
 	// wait for follower and candidate to finish
 	<-doneFollower
 	<-doneCandidate
-	//fmt.Printf("done.\n")
 }
 
 func runFollower(peerAddresses []string, done chan bool) {
@@ -75,8 +74,7 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	count := gochai.NewVar()
 	isLeader := gochai.NewVar()
 
-	// -- ghost variables
-	// these are used to access follower statements
+	// -- ghost variables used to access follower statements
 	votedFor := gochai.NewGhostVar()
 	myTerm := gochai.NewGhostVar()
 
@@ -87,9 +85,21 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	//    Initialization
 	// =====================
 
-	// {-@ pre: and([ref(k,C) = card(fs), ref(l,C) = 0, ref(count,C) = 0, ref(isLeader, C) = 0]) -@}
+	/*{-@ pre: and([
+				ref(k,C) = card(fs),
+				ref(l,C) = 0,
+				ref(count,C) = 0,
+				ref(isLeader, C) = 0])
+	-@}*/
 
-	// {-@ assume:  forall([decl(i,int)], and([ref(k,i) = card(fs),ref(l,i) = 0])) -@}
+	/*{-@ assume:
+		forall([decl(i,int)],
+				and([
+					ref(k,i) = card(fs),
+					ref(l,i) = 0
+					])
+					)
+	-@}*/
 	isLeader.Assign(0)
 	count.Assign(0)
 	term.Assign(int32(*termArg))
@@ -100,14 +110,24 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	for Peer := range n.PeerIds {
 		// send proposal to follower
 
-		// {-@ pre: forall([decl(i,int)], implies(elem(i,cs), and([ ref(k,i)+ref(l,i) =< card(fs), ref(count,i)=ref(l,i)]))) -@}
+		/*{-@ pre:
+				forall([decl(i,int)],
+					implies(
+						elem(i,cs),
+						and([
+							ref(k,i)+ref(l,i) =< card(fs),
+							ref(count,i)=ref(l,i)
+							])
+					 )
+			  )
+		-@}*/
 		id.Assign(n.MyId())
 		n.SendPair(Peer, id, term)
 		vote = n.RecvFrom(Peer)
 		if vote.Get() == 1 {
 			count.Assign(count.Get() + 1)
 		}
-		// Updating ghost variables
+		// Updating ghost variables; these have no runtime behavior
 		if vote.Get() == 1 && votedFor.Get() == n.MyId() && term.Get() == myTerm.Get() {
 			l.Assign(l.Get() + 1)
 			k.Assign(k.Get() - 1)
@@ -118,21 +138,54 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	//    Counting replies
 	// =====================
 
-	// {-@ pre: forall([decl(i,int)], implies(and([elem(i,cs), ref(isLeader,i)=1]), card(fs)<ref(count,i)*2)) -@}
+	/*{-@ pre:
+			forall([decl(i,int)],
+				implies(
+					and([
+						elem(i,cs),
+						ref(isLeader,i)=1
+						]),
+						card(fs)<ref(count,i)*2)
+				)
+	-@}*/
 
 	// {-@ declare: decl(f0, int) -@}
 
 	// {-@ assume: elem(f0,fs) -@}
 
-	/*{-@ assume: forall( [decl(i,int), decl(j,int)],
-		 implies( and([elem(i,cs), elem(j,cs), ref(l,i) > card(fs)/2, ref(l,j) > card(fs)/2]),
-				and([ ref(ref(votes,f0), ref(term,i))=i,
-							ref(ref(votes,f0), ref(term,j))=j
-		 ])))
+	/*{-@ assume:
+			forall([decl(i,int), decl(j,int)],
+		 		implies(
+					and([
+						elem(i,cs),
+						elem(j,cs),
+						ref(l,i) > card(fs)/2,
+						ref(l,j) > card(fs)/2
+						]),
+				and([
+					ref(ref(votes,f0),
+					ref(term,i))=i,
+					ref(ref(votes,f0),
+					ref(term,j))=j
+		 			])
+		 	 )
+	 )
 	-@}*/
 
-	/*{-@ pre: forall([decl(i,int), decl(j,int)], implies(and([ elem(i,cs), elem(j,cs), ref(count,i) > card(fs)/2, ref(count,j) > card(fs)/2,
-					ref(term,i)=ref(term,j), ref(isLeader,j)=1, ref(isLeader,i)=1]), i=j))
+	/*{-@ pre: forall([decl(i,int), decl(j,int)],
+								implies(
+										and([
+											elem(i,cs),
+											elem(j,cs),
+											ref(count,i) > card(fs)/2,
+											ref(count,j) > card(fs)/2,
+											ref(term,i)=ref(term,j),
+											ref(isLeader,j)=1,
+											ref(isLeader,i)=1
+											]),
+										i=j
+									)
+					 )
 	-@}*/
 	if 2*int(count.Get()) > n.NumPeers() {
 		isLeader.Assign(1)
@@ -148,4 +201,16 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	done <- true
 }
 
-// {-@ ensures: forall([decl(i,int), decl(j,int)], implies(and([elem(i,cs), elem(j,cs), ref(term,i)=ref(term,j), ref(isLeader,j)=1, ref(isLeader,i)=1]), i=j)) -@}
+/*{-@ ensures: forall([decl(i,int), decl(j,int)],
+			implies(
+					and([
+						elem(i,cs),
+						elem(j,cs),
+						ref(term,i)=ref(term,j),
+						ref(isLeader,j)=1,
+						ref(isLeader,i)=1
+						]),
+					i=j
+				)
+		)
+-@}*/
