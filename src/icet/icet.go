@@ -19,11 +19,13 @@ const INVARIANT_PREFIX = "invariant:"
 const PROPERTY_PREFIX = "ensures:"
 const PRECONDITION_PREFIX = "pre:"
 const ASSUMPION_PREFIX = "assume:"
+const DECLARATION_PREFIX = "declare:"
 const NDET = "ndet"
 
 var AnnotTypes = []icetTerm.AnnotatationType{icetTerm.Pre, icetTerm.Assume}
 var PropertyTypes = []icetTerm.AnnotatationType{icetTerm.Prop}
 var InvariantTypes = []icetTerm.AnnotatationType{icetTerm.Inv}
+var DeclarationTypes = []icetTerm.AnnotatationType{icetTerm.Declare}
 
 type IceTVisitor struct {
 	currentProcId   string
@@ -93,6 +95,7 @@ func main() {
 	v := makeNewIceTVisitor(comments, fset)
 	propertySet := parseComments(comments.Comments(), v.currentProcId, PropertyTypes)
 	v.Property = propertySet.PrintIceT()
+	addDeclarations(v, comments.Comments())
 	ast.Walk(v, node)
 	fmt.Printf("%v.", v.MakeIceTTerm())
 }
@@ -182,6 +185,15 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 	return NDET
 }
 
+func addDeclarations(v *IceTVisitor, comments []*ast.CommentGroup) {
+	for _, comment := range comments {
+		decl, atype := parseComment(comment)
+		if atype == icetTerm.Declare {
+			v.Declarations.AppendDecl(decl)
+		}
+	}
+}
+
 func parseAnnotations(stmt ast.Node, v *IceTVisitor) {
 	if stmt != nil {
 		comments := v.Comments.Filter(stmt)
@@ -228,6 +240,10 @@ func parseComment(comment *ast.CommentGroup) (string, icetTerm.AnnotatationType)
 		if strings.HasPrefix(s, ASSUMPION_PREFIX) {
 			s = strings.TrimPrefix(s, ASSUMPION_PREFIX)
 			return s, icetTerm.Assume
+		}
+		if strings.HasPrefix(s, DECLARATION_PREFIX) {
+			s = strings.TrimPrefix(s, DECLARATION_PREFIX)
+			return s, icetTerm.Declare
 		}
 	}
 	return "", icetTerm.None
@@ -280,7 +296,7 @@ func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
 			if sel.Sel.Name == "Assign" {
 				parseAnnotations(expr, v)
 				variable := getValue(sel.X, v)
-				value := getValue(site.Args[0], v)
+				value := parseExpression(site.Args[0], v)
 				v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: variable, Value: value, IsMap: false})
 				return true
 				// _map.Put(key,value)
@@ -288,7 +304,7 @@ func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
 				parseAnnotations(expr, v)
 				_map := getValue(sel.X, v)
 				key := getValue(site.Args[0], v)
-				value := getValue(site.Args[1], v)
+				value := parseExpression(site.Args[1], v)
 				v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.currentProcId, Var: _map, Value: value, Key: key, IsMap: true})
 				return true
 			}
@@ -379,7 +395,6 @@ func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 					varType = "map(int, int)"
 					ok = true
 				} else if sel.Sel.Name == "NewGhostVar" {
-					fmt.Printf("Setting %v to true\n", varName)
 					v.isGhostVar[varName] = true
 					ok = false
 				}
@@ -443,7 +458,7 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	//parse condition
 	var vr *IceTVisitor
-	cond := parseCondition(ifStmt.Cond, v)
+	cond := parseExpression(ifStmt.Cond, v)
 	// parse left subexpression
 	vl := makeNewIceTVisitor(v.Comments, v.fileSet)
 	vl.currentProcId = v.currentProcId
@@ -473,12 +488,12 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	return false
 }
 
-func parseCondition(cond ast.Expr, v *IceTVisitor) string {
+func parseExpression(cond ast.Expr, v *IceTVisitor) string {
 	switch cond.(type) {
 	case *ast.BinaryExpr:
 		binExp := cond.(*ast.BinaryExpr)
-		left := parseCondition(binExp.X, v)
-		right := parseCondition(binExp.Y, v)
+		left := parseExpression(binExp.X, v)
+		right := parseExpression(binExp.Y, v)
 		// equality
 		if binExp.Op.String() == "==" {
 			return fmt.Sprintf("%v=%v", left, right)
@@ -498,7 +513,7 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 		return fmt.Sprintf("%v%v%v", left, binExp.Op.String(), right)
 	case *ast.ParenExpr:
 		parenExp := cond.(*ast.ParenExpr)
-		exp := parseCondition(parenExp.X, v)
+		exp := parseExpression(parenExp.X, v)
 		return fmt.Sprintf("(%v)", exp)
 	default:
 		val := getValue(cond, v)
@@ -506,7 +521,6 @@ func parseCondition(cond ast.Expr, v *IceTVisitor) string {
 			proc := v.currentProcId
 			// if the variable is a ghost variable shadowing another procs var, use the other proc's id
 			ok := v.isGhostVar[val]
-			fmt.Printf("is %v a ghost var: %v\n", val, ok)
 			if ok {
 				proc = v.currentPeerID
 			}

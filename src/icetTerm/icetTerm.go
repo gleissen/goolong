@@ -15,11 +15,12 @@ type IDType int
 type AnnotatationType int
 
 const ( // annotation types
-	Inv    AnnotatationType = iota
-	Prop                    = iota // property
-	Pre                     = iota // precondition
-	Assume                  = iota // assumtpion
-	None                    = iota
+	Inv     AnnotatationType = iota
+	Prop                     = iota // property
+	Pre                      = iota // precondition
+	Assume                   = iota // assumtpion
+	Declare                  = iota
+	None                     = iota
 )
 
 const (
