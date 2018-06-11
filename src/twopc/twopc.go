@@ -26,6 +26,7 @@ func runCoordinatorProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", c, *myAddr, peerAddresses, false)
 	fmt.Println("Acting as coordinator.")
 	n.AssignSymSet("dbs", "")
+	n.Start()
 	// Declaring protocol state
 	proposal := gochai.NewVar()
 	vote := gochai.NewVar()
@@ -69,6 +70,7 @@ func runCoordinatorProtocol(peerAddresses []string) {
 
 func runServerProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
+	n.Start()
 	fmt.Println("Acting as db server.")
 	val := gochai.NewVar()
 	value := gochai.NewVar()

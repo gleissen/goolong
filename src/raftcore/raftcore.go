@@ -24,6 +24,7 @@ func main() {
 
 func runFollower(peerAddresses []string, done chan bool) {
 	n := gochai.CreateNewNode("f", *myID, *myAddr, peerAddresses, false)
+	n.Start()
 	n.StartSymSet("fs", "f")
 	n.AssignSymSet("cs", "")
 	// Initializations
@@ -60,6 +61,7 @@ func runFollower(peerAddresses []string, done chan bool) {
 
 func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
+	n.Start()
 
 	// -- Assigning sets --
 	// part of symmetric set "cs"

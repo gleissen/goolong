@@ -388,7 +388,7 @@ func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 				var varType = "unknown"
 				ok := false
 				// switch variable type
-				if sel.Sel.Name == "NewVar" {
+				if sel.Sel.Name == "NewVar" || sel.Sel.Name == "NewBoolVar" {
 					varType = "int"
 					ok = true
 				} else if sel.Sel.Name == "NewMap" {

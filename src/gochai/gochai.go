@@ -28,6 +28,11 @@ type SymSet struct {
 type IntVar struct {
 	thisVar int32
 }
+
+type BoolVar struct {
+	thisVar uint8
+}
+
 type GhostVar struct {
 }
 
@@ -42,6 +47,22 @@ func (v *IntVar) Assign(val int32) {
 
 func (v *IntVar) Get() int32 {
 	return v.thisVar
+}
+
+func NewBoolVar() *BoolVar {
+	return &BoolVar{thisVar: 0}
+}
+
+func (v *BoolVar) Assign(val uint8) {
+	v.thisVar = val
+}
+
+func (v *BoolVar) Get() uint8 {
+	return v.thisVar
+}
+
+func NewBoolVar_(v uint8) *BoolVar {
+	return &BoolVar{thisVar: v}
 }
 
 // -- get user input from stdin
@@ -70,6 +91,10 @@ func (v *IntVar) New() fastrpc.Serializable {
 
 func NewVar() *IntVar {
 	return &IntVar{thisVar: -1}
+}
+
+func NewIntVar_(v int32) *IntVar {
+	return &IntVar{thisVar: v}
 }
 
 // ghost variables
@@ -165,9 +190,13 @@ func CreateNewNode(name string, id int, myaddr string, peerAddrList []string, is
 		n.intChans[i] = make(chan fastrpc.Serializable)
 		n.pairChans[i] = make(chan fastrpc.Serializable)
 	}
+
+	return n
+}
+
+func (n *ChaiNode) Start() {
 	n.Run()
 	<-n.Connected
-	return n
 }
 
 func (n *ChaiNode) Shutdown() {
@@ -224,17 +253,17 @@ func (n *ChaiNode) RecvPair() (*IntVar, *IntVar) {
 }
 
 // Receive from a given id
-func (n *ChaiNode) recvFrom(id int, chans []chan fastrpc.Serializable) fastrpc.Serializable {
+func (n *ChaiNode) RecvFromGen(id int, chans []chan fastrpc.Serializable) fastrpc.Serializable {
 	msg := <-chans[id]
 	return msg
 }
 
 func (n *ChaiNode) RecvFrom(id int) *IntVar {
-	msg := n.recvFrom(id, n.intChans)
+	msg := n.RecvFromGen(id, n.intChans)
 	return msg.(*IntVar)
 }
 
 func (n *ChaiNode) RecvPairFrom(id int) (*IntVar, *IntVar) {
-	msg := n.recvFrom(id, n.pairChans)
+	msg := n.RecvFromGen(id, n.pairChans)
 	return msg.(*IntPair).Unpack()
 }

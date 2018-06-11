@@ -4,7 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"gochai"
+	"log"
+	"paxosproto"
 )
+
+// =============
+//  Main entry
+// =============
 
 var term = flag.Int("term", 0, "Current term")
 var proposal = flag.Int("proposal", 0, "Proposed value")
@@ -14,6 +20,9 @@ var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaul
 func main() {
 	flag.Parse()
 	peerAddresses := flag.Args()
+	if *myID < 0 || *myID >= len(peerAddresses) {
+		log.Fatal("id: index out of bounds")
+	}
 	doneFollower := make(chan bool, 1)
 	doneCandidate := make(chan bool, 1)
 	go runProposer(peerAddresses, term, proposal, doneFollower)
@@ -23,8 +32,13 @@ func main() {
 	<-doneCandidate
 }
 
+// ==========
+//  Proposer
+// ==========
+
 func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done chan bool) {
-	n := gochai.CreateNewNode("p", *myID, *myAddr, peerAddresses, false)
+	n := paxosproto.NewPaxosNode("p", *myID, *myAddr, peerAddresses, false)
+	n.Start()
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("as", "")
 
@@ -50,19 +64,20 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 
 		id.Assign(n.MyId())
 		// propose myTerm
-		fmt.Printf("prop: sending proposal %v to %v\n", myTerm.Get(), Peer)
+		fmt.Printf("prop: sending proposal %v and id %v to %v\n", myTerm.Get(), id.Get(), Peer)
 		n.SendPair(Peer, id, myTerm)
 		// receive highest accepted term w_t and accepted value w
-		rmax, rwT := n.RecvPairFrom(Peer)
-		fmt.Printf("prop: received answer %v from %v\n", rwT.Get(), Peer)
+		//msg.Rwt, msg.Rw, msg.Success
+		rwT, rw, rsuccess := n.RecvPropReplyFrom(Peer)
+		fmt.Printf("prop: received answer rwT:%v and rw:%v from %v\n", rwT.Get(), rw.Get(), Peer)
 		// if not outdated
-		if myTerm.Get() >= rmax.Get() {
+		if rsuccess.Get() == 1 {
 			ho.Assign(ho.Get() + 1)
 		}
 		// if a newer value was accepted, propose that value instead
 		if rwT.Get() >= xT.Get() {
 			xT.Assign(rwT.Get())
-			//x.Assign(rw.Get())
+			x.Assign(rw.Get())
 		}
 	}
 	if 2*int(ho.Get()) > n.NumPeers() {
@@ -82,9 +97,13 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 	//--end
 }
 
-func runAcceptor(peerAddresses []string, done chan bool) {
-	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
+// ============
+//   Acceptor
+// ============
 
+func runAcceptor(peerAddresses []string, done chan bool) {
+	n := paxosproto.NewPaxosNode("c", *myID, *myAddr, peerAddresses, true)
+	n.Start()
 	// -- Assigning sets --
 	n.StartSymSet("as", "a")
 	n.AssignSymSet("ps", "")
@@ -93,19 +112,21 @@ func runAcceptor(peerAddresses []string, done chan bool) {
 	max := gochai.NewVar()
 	wT := gochai.NewVar()
 	w := gochai.NewVar()
-
+	success := gochai.NewBoolVar()
 	// Initializations
 	max.Assign(-1)
 	wT.Assign(-1)
 	w.Assign(-1)
 	for _ = range n.PeerIds {
 		resID, t := n.RecvPair()
+		success.Assign(0)
 		fmt.Printf("acc: received proposal %v from %v\n", t.Get(), resID.Get())
 		if t.Get() > max.Get() {
 			max.Assign(t.Get())
+			success.Assign(1)
 		}
-		fmt.Printf("acc: sending reply\n")
-		n.SendPair(int(resID.Get()), max, wT)
+		fmt.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(), w.Get(), success.Get(), resID.Get())
+		n.SendPropReply(int(resID.Get()), wT, w, success)
 	}
 	n.Shutdown()
 	done <- true
