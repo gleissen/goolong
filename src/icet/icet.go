@@ -28,20 +28,22 @@ var InvariantTypes = []icetTerm.AnnotatationType{icetTerm.Inv}
 var DeclarationTypes = []icetTerm.AnnotatationType{icetTerm.Declare}
 
 type IceTVisitor struct {
-	currentProcId   string
-	currentProgram  *icetTerm.Program
-	currentProccess *icetTerm.Process
-	currentSet      string
-	currentPeerSet  string
-	currentPeerID   string
-	currentIDType   icetTerm.IDType
-	inSet           bool
-	IceTTerm        string
-	Comments        ast.CommentMap
-	Property        string
-	Declarations    icetTerm.Declarations
-	fileSet         *token.FileSet
-	isGhostVar      map[string]bool
+	currentProcId    string
+	currentProgram   *icetTerm.Program
+	currentProccess  *icetTerm.Process
+	currentSet       string
+	currentPeerSet   string
+	currentPeerID    string
+	currentIDType    icetTerm.IDType
+	currentSwitchTag string
+	inSet            bool
+	IceTTerm         string
+	Comments         ast.CommentMap
+	Property         string
+	Declarations     icetTerm.Declarations
+	fileSet          *token.FileSet
+	isGhostVar       map[string]bool
+	constMap         map[string]string
 }
 
 func (v *IceTVisitor) PrettyPrint() string {
@@ -68,13 +70,15 @@ func makeNewIceTVisitor(comments ast.CommentMap, fileSet *token.FileSet) *IceTVi
 		"",
 		"",
 		icetTerm.Pid,
+		"",
 		false,
 		"",
 		comments,
 		"",
 		icetTerm.Declarations{Decls: make([]string, 0)},
 		fileSet,
-		make(map[string]bool)}
+		make(map[string]bool),
+		make(map[string]string)}
 	return v
 }
 
@@ -121,11 +125,28 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 			return nil // children were already traversed
 		}
 
+	case *ast.GenDecl:
+		parseConstant(node.(*ast.GenDecl), v)
+
 	case *ast.IfStmt:
 		ok := parseConditional(node.(*ast.IfStmt), v)
 		if ok {
 			return nil
 		}
+
+	case *ast.SwitchStmt:
+		ok := parseSwitchStmt(node.(*ast.SwitchStmt), v)
+		if ok {
+			return nil
+		}
+
+	case *ast.CaseClause:
+		parseCaseClause(node.(*ast.CaseClause), v)
+		return nil
+
+	case *ast.ForStmt:
+		parseRepeat(node.(*ast.ForStmt), v)
+		return nil
 
 	case *ast.FuncDecl:
 		ok := parseSymSetDecl(node.(*ast.FuncDecl), v)
@@ -147,7 +168,12 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 	case *ast.BasicLit:
 		return stringRemoveQuotes(stmt.(*ast.BasicLit).Value)
 	case *ast.Ident:
-		return stringRemoveQuotes(stmt.(*ast.Ident).Name)
+		name := stmt.(*ast.Ident).Name
+		value, ok := v.constMap[name]
+		if ok {
+			return value
+		}
+		return stringRemoveQuotes(name)
 	case *ast.CallExpr:
 		site := stmt.(*ast.CallExpr)
 		switch site.Fun.(type) {
@@ -165,10 +191,11 @@ func getValue(stmt ast.Node, v *IceTVisitor) string {
 			}
 		case *ast.Ident:
 			ident := site.Fun.(*ast.Ident)
-			if ident.Name == "int" || ident.Name == "int32" {
+			if ident.Name == "int" || ident.Name == "int32" || ident.Name == "uint8" {
 				return getValue(site.Args[0], v)
 			}
 			return ident.Name
+
 		default:
 			return NDET
 		}
@@ -214,6 +241,19 @@ func parseNewNode(site *ast.CallExpr, v *IceTVisitor) {
 				v.currentProcId = proc
 			}
 			v.currentProccess = icetTerm.NewProcess()
+		}
+	}
+}
+
+func parseConstant(decl *ast.GenDecl, v *IceTVisitor) {
+	if decl.Tok == token.CONST {
+		for _, spec := range decl.Specs {
+			valSpec, ok := spec.(*ast.ValueSpec)
+			if ok {
+				constant := getValue(valSpec.Names[0], v)
+				value := getValue(valSpec.Values[0], v)
+				v.constMap[constant] = value
+			}
 		}
 	}
 }
@@ -277,13 +317,23 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	return false
 }
 
+func parseRepeat(repeatTerm *ast.ForStmt, v *IceTVisitor) {
+	lv := copyVisitor(v)
+	ast.Walk(lv, repeatTerm.Body)
+	v.Declarations.Append(&lv.Declarations)
+	LoopStmt := icetTerm.RepeatLoop{ProcID: v.currentProcId, Stmts: *lv.currentProccess}
+	v.currentProccess.AddStmt(&LoopStmt)
+}
+
 func copyVisitor(v *IceTVisitor) *IceTVisitor {
 	cp := makeNewIceTVisitor(v.Comments, v.fileSet)
 	cp.currentProcId = v.currentProcId
 	cp.inSet = v.inSet
+	cp.currentSwitchTag = v.currentSwitchTag
 	cp.currentSet = v.currentSet
 	cp.currentPeerSet = v.currentPeerSet
 	cp.isGhostVar = v.isGhostVar
+	cp.constMap = v.constMap
 	return cp
 }
 
@@ -339,7 +389,7 @@ func parseSymSetDecl(decl *ast.FuncDecl, v *IceTVisitor) bool {
 			if ok {
 				set, ok := parseStartSymSet(stmt, v)
 				if ok {
-					sv := makeNewIceTVisitor(v.Comments, v.fileSet)
+					sv := copyVisitor(v) //makeNewIceTVisitor(v.Comments, v.fileSet)
 					sv.currentSet = set.Name
 					sv.inSet = true
 					sv.currentProcId = set.ProcVar
@@ -388,7 +438,7 @@ func parseDeclaration(assign *ast.AssignStmt, v *IceTVisitor) {
 				var varType = "unknown"
 				ok := false
 				// switch variable type
-				if sel.Sel.Name == "NewVar" || sel.Sel.Name == "NewBoolVar" {
+				if sel.Sel.Name == "NewVar" || sel.Sel.Name == "NewUInt8" {
 					varType = "int"
 					ok = true
 				} else if sel.Sel.Name == "NewMap" {
@@ -460,16 +510,12 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	var vr *IceTVisitor
 	cond := parseExpression(ifStmt.Cond, v)
 	// parse left subexpression
-	vl := makeNewIceTVisitor(v.Comments, v.fileSet)
-	vl.currentProcId = v.currentProcId
-	vl.inSet = v.inSet
+	vl := copyVisitor(v)
 	ast.Walk(vl, ifStmt.Body)
 	// parse right subexpression
 	var rightproc *icetTerm.Process
 	if ifStmt.Else != nil {
-		vr = makeNewIceTVisitor(v.Comments, v.fileSet)
-		vr.currentProcId = v.currentProcId
-		vr.inSet = v.inSet
+		vr := copyVisitor(v)
 		ast.Walk(vr, ifStmt.Else)
 		rightproc = vr.currentProccess
 	} else {
@@ -486,6 +532,28 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 		return true
 	}
 	return false
+}
+
+func parseSwitchStmt(switchStmt *ast.SwitchStmt, v *IceTVisitor) bool {
+	vb := copyVisitor(v)
+	vb.currentSwitchTag = parseExpression(switchStmt.Tag, v)
+	ast.Walk(vb, switchStmt.Body)
+	if vb != nil {
+		parseAnnotations(switchStmt, v)
+		v.currentProccess.AddProc(vb.currentProccess)
+		v.Declarations.Append(&vb.Declarations)
+		return true
+	}
+	return false
+}
+
+func parseCaseClause(caseClause *ast.CaseClause, v *IceTVisitor) {
+	caseExpr := parseExpression(caseClause.List[0], v)
+	vc := copyVisitor(v)
+	ast.Walk(vc, &ast.BlockStmt{List: caseClause.Body, Lbrace: caseClause.Pos(), Rbrace: caseClause.End()})
+	cond := fmt.Sprintf("%v==%v", vc.currentSwitchTag, caseExpr)
+	ifStmt := &icetTerm.Conditional{ProcID: v.currentProcId, Cond: cond, Left: *vc.currentProccess, Right: *icetTerm.NewProcess()}
+	v.currentProccess.AddStmt(ifStmt)
 }
 
 func parseExpression(cond ast.Expr, v *IceTVisitor) string {

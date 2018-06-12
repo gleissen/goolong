@@ -29,7 +29,7 @@ type IntVar struct {
 	thisVar int32
 }
 
-type BoolVar struct {
+type UInt8 struct {
 	thisVar uint8
 }
 
@@ -49,20 +49,20 @@ func (v *IntVar) Get() int32 {
 	return v.thisVar
 }
 
-func NewBoolVar() *BoolVar {
-	return &BoolVar{thisVar: 0}
+func NewUInt8() *UInt8 {
+	return &UInt8{thisVar: 0}
 }
 
-func (v *BoolVar) Assign(val uint8) {
+func (v *UInt8) Assign(val uint8) {
 	v.thisVar = val
 }
 
-func (v *BoolVar) Get() uint8 {
+func (v *UInt8) Get() uint8 {
 	return v.thisVar
 }
 
-func NewBoolVar_(v uint8) *BoolVar {
-	return &BoolVar{thisVar: v}
+func NewUInt8_(v uint8) *UInt8 {
+	return &UInt8{thisVar: v}
 }
 
 // -- get user input from stdin
@@ -228,8 +228,8 @@ func (n *ChaiNode) Send(id int, msg fastrpc.Serializable) {
 }
 
 // receive from any peer
-func (n *ChaiNode) recvAll(chans []chan fastrpc.Serializable) fastrpc.Serializable {
-	cases := make([]reflect.SelectCase, n.NumPeers())
+func (n *ChaiNode) RecvAll(chans []chan fastrpc.Serializable) fastrpc.Serializable {
+	cases := make([]reflect.SelectCase, len(chans))
 	for i, ch := range chans {
 		cases[i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ch)}
 	}
@@ -238,7 +238,7 @@ func (n *ChaiNode) recvAll(chans []chan fastrpc.Serializable) fastrpc.Serializab
 }
 
 func (n *ChaiNode) Recv() *IntVar {
-	msg := n.recvAll(n.intChans)
+	msg := n.RecvAll(n.intChans)
 	return msg.(*IntVar)
 }
 
@@ -248,7 +248,7 @@ func (n *ChaiNode) SendPair(id int, l *IntVar, r *IntVar) {
 }
 
 func (n *ChaiNode) RecvPair() (*IntVar, *IntVar) {
-	msg := n.recvAll(n.pairChans)
+	msg := n.RecvAll(n.pairChans)
 	return msg.(*IntPair).Unpack()
 }
 

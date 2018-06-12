@@ -76,6 +76,11 @@ type ForLoop struct {
 	Stmts     Process
 }
 
+type RepeatLoop struct {
+	ProcID string
+	Stmts  Process
+}
+
 type SymSet struct {
 	ProcVar string
 	Name    string
@@ -179,6 +184,16 @@ func (l *ForLoop) PrintIceT() string {
 	return fmt.Sprintf("for(%v, %v, %v, rr, %v, %v)", l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT())
 }
 
+// Repeat Loops
+func (l *RepeatLoop) PrettyPrint() string {
+	return fmt.Sprintf("%v: repeat %v end", l.ProcID, l.Stmts.PrettyPrint())
+}
+
+func (l *RepeatLoop) PrintIceT() string {
+	return fmt.Sprintf("while(%v, true, %v)", l.ProcID, l.Stmts.PrintIceT())
+}
+
+// Sets
 func (s *SymSet) PrintIceT() string {
 	return fmt.Sprintf("sym(%v, %v, %v)", s.ProcVar, s.Name, s.Stmts.PrintIceT())
 }
@@ -253,6 +268,10 @@ func (proc *Process) AddStmt(stmt IcetTerm) {
 
 func (proc *Process) AddStmts(stmt []IcetTerm) {
 	proc.stmts = append(proc.stmts, stmt...)
+}
+
+func (proc *Process) AddProc(proc1 *Process) {
+	proc.stmts = append(proc.stmts, proc1.stmts...)
 }
 
 func (proc *Process) PrettyPrint() string {
