@@ -60,9 +60,9 @@ func (v *IceTVisitor) PrettyPrint() string {
 
 func (v *IceTVisitor) MakeIceTTerm() string {
 	v.currentProgram.AddProc(v.currentProccess)
-	v.IceTTerm = v.currentProgram.PrintIceT()
+	v.IceTTerm = v.currentProgram.PrintIceT(0)
 	v.currentProgram.RemoveLastProc()
-	return fmt.Sprintf("prog(raftcore, %v, ensures(%v), %v)", v.Declarations.PrintIceT(), v.Property, v.IceTTerm)
+	return fmt.Sprintf("prog(raftcore,\n %v,\n \tensures(%v),\n %v)", v.Declarations.PrintIceT(1), v.Property, v.IceTTerm)
 }
 
 func MakeNewIceTVisitor() *IceTVisitor {
@@ -107,7 +107,7 @@ func (v *IceTVisitor) ExtractIcetTerm(file string) string {
 		log.Fatal(err)
 	}
 	propertySet := parseComments(v.Comments.Comments(), v.CurrentProcId, PropertyTypes)
-	v.Property = propertySet.PrintIceT()
+	v.Property = propertySet.PrintIceT(0)
 	addDeclarations(v, v.Comments.Comments())
 	ast.Walk(v, node)
 	return v.MakeIceTTerm()
@@ -315,7 +315,7 @@ func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	if ok && domain.Sel.Name == "PeerIds" {
 		loopComments := v.Comments.Filter(loopTerm.Body)
 		invariantSet := parseComments(loopComments.Comments(), v.CurrentProcId, InvariantTypes)
-		invariant := invariantSet.PrintIceT()
+		invariant := invariantSet.PrintIceT(0)
 		lv := copyVisitor(v)
 		lv.currentPeerID = v.GetValue(loopTerm.Key)
 		ast.Walk(lv, loopTerm.Body)
