@@ -7,7 +7,7 @@ import (
 
 type CustomParser interface {
 	ParseSend(string, []ast.Expr, string, icetTerm.IDType, func(ast.Node) string) (bool, icetTerm.IcetTerm)
-	ParseReceive(string, []ast.Expr, string, string, bool, func(ast.Node) string) (bool, icetTerm.IcetTerm)
+	ParseReceive(string, []ast.Expr, string, string, string, func(ast.Node) string) (bool, icetTerm.IcetTerm)
 }
 
 // default implementation
@@ -17,6 +17,6 @@ func (d *DefaultParser) ParseSend(string, []ast.Expr, string, icetTerm.IDType, f
 	return false, nil
 }
 
-func (d *DefaultParser) ParseReceive(string, []ast.Expr, string, string, bool, func(ast.Node) string) (bool, icetTerm.IcetTerm) {
+func (d *DefaultParser) ParseReceive(string, []ast.Expr, string, string, string, func(ast.Node) string) (bool, icetTerm.IcetTerm) {
 	return false, nil
 }
