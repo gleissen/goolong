@@ -6,7 +6,7 @@ import (
 )
 
 const PROC_SIZE = 5
-const STMT_SIZE = 20
+const STMT_SIZE = 0
 const SKIP = "skip"
 const ANNOT_SIZE = 5
 
@@ -30,7 +30,8 @@ const (
 
 type IcetTerm interface {
 	PrintIceT(int) string
-	PrettyPrint() string
+	Remainder() IcetTerm
+	Minimize() IcetTerm
 }
 
 // Programs
@@ -113,18 +114,34 @@ func indentationAtLv(lv int) string {
 	return ident
 }
 
-// Declarations
-func (c *Conditional) PrettyPrint() string {
-	return fmt.Sprintf("%v: if %v then %v else %v\n", c.ProcID, c.Cond, c.Left.PrettyPrint(), c.Right.PrettyPrint())
+func IsSkip(t IcetTerm) bool {
+	proc, ok := t.(*Process)
+	if ok && len(proc.stmts) == 0 {
+		return true
+	}
+	return false
 }
+
+// Declarations
 
 func (c *Conditional) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
 	return fmt.Sprintf("%vite(%v,%v,\n%v,\n%v)", ident, c.ProcID, c.Cond, c.Left.PrintIceT(lv+1), c.Right.PrintIceT(lv+1))
 }
 
-func (d *Declarations) PrettyPrint() string {
-	return fmt.Sprintf("declarations: %v\n", strings.Join(d.Decls, ","))
+func (c *Conditional) Remainder() IcetTerm {
+	lr := c.Left.Remainder().(*Process)
+	rr := c.Right.Remainder().(*Process)
+	return &Conditional{ProcID: c.ProcID, Cond: c.Cond, Left: *lr, Right: *rr}
+}
+
+func (c *Conditional) Minimize() IcetTerm {
+	lm := c.Left.Minimize().(*Process)
+	rm := c.Right.Minimize().(*Process)
+	if IsSkip(lm) && IsSkip(rm) {
+		return NewProcess()
+	}
+	return &Conditional{ProcID: c.ProcID, Cond: c.Cond, Left: *lm, Right: *rm}
 }
 
 func MapToIcetTerm(vs []IcetTerm, lv int) []string {
@@ -155,6 +172,14 @@ func (d *Declarations) PrintIceT(lv int) string {
 	return fmt.Sprintf("[%v]", joinWithIndent(d.Decls, ",\n", lv))
 }
 
+func (d *Declarations) Remainder() IcetTerm {
+	return NewProcess()
+}
+
+func (d *Declarations) Minimize() IcetTerm {
+	return d
+}
+
 func NewDeclarations() Declarations {
 	return Declarations{make([]string, 0)}
 }
@@ -168,12 +193,6 @@ func (d *Declarations) Append(d1 *Declarations) {
 }
 
 // Assign statements
-func (a *Assign) PrettyPrint() string {
-	if a.IsMap {
-		return fmt.Sprintf("%v: %v[%v]:=%v", a.ProcID, a.Var, a.Key, a.Value)
-	}
-	return fmt.Sprintf("%v: %v:=%v", a.ProcID, a.Var, a.Value)
-}
 
 func (a *Assign) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
@@ -183,10 +202,15 @@ func (a *Assign) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vassign(%v,%v,%v)", ident, a.ProcID, a.Var, a.Value)
 }
 
-// Send statements
-func (s *Send) PrettyPrint() string {
-	return fmt.Sprintf("%v: send(%v, %v)", s.ProcID, s.RecipientID, s.Value)
+func (a *Assign) Remainder() IcetTerm {
+	return NewProcess()
 }
+
+func (a *Assign) Minimize() IcetTerm {
+	return a
+}
+
+// Send statements
 
 func (s *Send) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
@@ -196,13 +220,15 @@ func (s *Send) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vsend(%v, e_var(%v), %v)", ident, s.ProcID, s.RecipientID, s.Value)
 }
 
-// Receive statements
-func (r *Recv) PrettyPrint() string {
-	if r.IsRecvFrom {
-		return fmt.Sprintf("%v: %v:=recvFrom(%v)", r.ProcID, r.Variable, r.FromId)
-	}
-	return fmt.Sprintf("%v: recv(%v)", r.ProcID, r.Variable)
+func (s *Send) Remainder() IcetTerm {
+	return NewProcess()
 }
+
+func (s *Send) Minimize() IcetTerm {
+	return s
+}
+
+// Receive statements
 
 func (r *Recv) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
@@ -212,11 +238,15 @@ func (r *Recv) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vrecv(%v, %v)", ident, r.ProcID, r.Variable)
 }
 
-// For Loops
-
-func (l *ForLoop) PrettyPrint() string {
-	return fmt.Sprintf("%v: for %v in %v do %v end", l.ProcID, l.LoopVar, l.Set, l.Stmts.PrettyPrint())
+func (r *Recv) Remainder() IcetTerm {
+	return NewProcess()
 }
+
+func (r *Recv) Minimize() IcetTerm {
+	return r
+}
+
+// For Loops
 
 func (l *ForLoop) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
@@ -226,15 +256,35 @@ func (l *ForLoop) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vfor(%v, %v, %v, rr, %v,\n %v)", ident, l.ProcID, l.LoopVar, l.Set, l.Invariant, l.Stmts.PrintIceT(lv+1))
 }
 
-// Repeat Loops
-func (l *RepeatLoop) PrettyPrint() string {
-
-	return fmt.Sprintf("%v: repeat %v end", l.ProcID, l.Stmts.PrettyPrint())
+func (l *ForLoop) Remainder() IcetTerm {
+	return NewProcess()
 }
+
+func (l *ForLoop) Minimize() IcetTerm {
+	minStmts := l.Minimize().(*Process)
+	if IsSkip(minStmts) {
+		return NewProcess()
+	}
+	return &ForLoop{ProcID: l.ProcID, LoopVar: l.LoopVar, Set: l.Set, Invariant: l.Invariant, Stmts: *minStmts}
+}
+
+// Repeat Loops
 
 func (l *RepeatLoop) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
 	return fmt.Sprintf("%vwhile(%v, true,\n %v)\n", ident, l.ProcID, l.Stmts.PrintIceT(lv+1))
+}
+
+func (l *RepeatLoop) Remainder() IcetTerm {
+	return l
+}
+
+func (l *RepeatLoop) Minimize() IcetTerm {
+	minStms := l.Stmts.Minimize().(*Process)
+	if IsSkip(minStms) {
+		return NewProcess()
+	}
+	return &RepeatLoop{ProcID: l.ProcID, Stmts: *minStms}
 }
 
 // Sets
@@ -243,8 +293,16 @@ func (s *SymSet) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vsym(%v, %v,\n%v)", ident, s.ProcVar, s.Name, s.Stmts.PrintIceT(lv+1))
 }
 
-func (s *SymSet) PrettyPrint() string {
-	return fmt.Sprintf("%v∏_%v:%v(\n%v)\n", s.ProcVar, s.Name, s.Stmts.PrettyPrint())
+func (s *SymSet) Remainder() IcetTerm {
+	sr := s.Stmts.Remainder().(*Process)
+	return &SymSet{ProcVar: s.ProcVar, Name: s.Name, Stmts: *sr}
+}
+func (s *SymSet) Minimize() IcetTerm {
+	sm := s.Stmts.Minimize().(*Process)
+	if IsSkip(sm) {
+		return NewProcess()
+	}
+	return &SymSet{ProcVar: s.ProcVar, Name: s.Name, Stmts: *sm}
 }
 
 // Programs
@@ -265,20 +323,6 @@ func (p *Program) RemoveLastProc() (IcetTerm, bool) {
 	return NewProcess(), false
 }
 
-func (p *Program) PrettyPrint() string {
-	var prog string
-	if len(p.procs) > 0 {
-		prog = p.procs[0].PrettyPrint()
-		for _, proccess := range p.procs[1:] {
-			this := proccess.PrettyPrint()
-			prog = fmt.Sprintf("%v || %v", prog, this)
-		}
-	} else {
-		prog = SKIP
-	}
-	return prog
-}
-
 func (p *Program) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
 	switch len(p.procs) {
@@ -290,21 +334,25 @@ func (p *Program) PrintIceT(lv int) string {
 	strs := MapToIcetTerm(p.procs, lv+1)
 	procs := joinWithIndent(strs, ",\n", 0)
 	return fmt.Sprintf("%vpar([\n%v])", ident, procs)
-	/*
-		var prog string
-		ident := indentationAtLv(lv)
-		if len(p.procs) > 0 {
-			prog = fmt.Sprintf("%vpar([\n%v", p.procs[0].PrintIceT(lv+1), ident)
-			for _, proccess := range p.procs[1:] {
-				this := proccess.PrintIceT(lv + 1)
-				prog = fmt.Sprintf("%v,%v", prog, this)
-			}
-			prog = fmt.Sprintf("%v])", prog)
-		} else {
-			prog = fmt.Sprintf("%v%v", ident, SKIP)
+}
+
+func (p *Program) Remainder() IcetTerm {
+	remProcs := make([]IcetTerm, len(p.procs))
+	for i, proc := range p.procs {
+		remProcs[i] = proc.Remainder()
+	}
+	return &Program{remProcs}
+}
+
+func (p *Program) Minimize() IcetTerm {
+	minProcs := make([]IcetTerm, 0)
+	for _, proc := range p.procs {
+		min := proc.Minimize()
+		if !IsSkip(min) {
+			minProcs = append(minProcs, min)
 		}
-		return prog
-	*/
+	}
+	return &Program{minProcs}
 }
 
 // Processes
@@ -332,19 +380,6 @@ func (proc *Process) AddProc(proc1 *Process) {
 	proc.stmts = append(proc.stmts, proc1.stmts...)
 }
 
-func (proc *Process) PrettyPrint() string {
-	var stmts string
-	if len(proc.stmts) > 0 {
-		stmts = proc.stmts[0].PrettyPrint()
-		for _, stmt := range proc.stmts[1:] {
-			stmts = fmt.Sprintf("%v;%v", stmts, stmt.PrettyPrint())
-		}
-	} else {
-		stmts = SKIP
-	}
-	return stmts
-}
-
 func (proc *Process) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
 	switch len(proc.stmts) {
@@ -358,17 +393,26 @@ func (proc *Process) PrintIceT(lv int) string {
 	return fmt.Sprintf("%vseq([\n%v\n%v])", ident, procs, ident)
 }
 
-// Annotations
-
-func (a *Annotation) PrettyPrint() string {
-	switch a.Type {
-	case Pre:
-		return fmt.Sprintf("precondition: %v", a.Annot)
-	case Assume:
-		return fmt.Sprintf("assumption: %v", a.Annot)
+func (proc *Process) Remainder() IcetTerm {
+	remStmts := make([]IcetTerm, len(proc.stmts))
+	for i, stmt := range proc.stmts {
+		remStmts[i] = stmt.Remainder()
 	}
-	return ""
+	return &Process{remStmts}
 }
+
+func (proc *Process) Minimize() IcetTerm {
+	minStmts := make([]IcetTerm, 0)
+	for _, stmt := range proc.stmts {
+		min := stmt.Minimize()
+		if !IsSkip(min) {
+			minStmts = append(minStmts, min)
+		}
+	}
+	return &Process{minStmts}
+}
+
+// Annotations
 
 func (a *Annotation) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
@@ -383,12 +427,12 @@ func (a *Annotation) PrintIceT(lv int) string {
 	return ""
 }
 
-func (as *AnnotationSet) PrettyPrint() string {
-	var s []string
-	for _, a := range as.Annots {
-		s = append(s, a.PrettyPrint())
-	}
-	return strings.Join(s, ",")
+func (a *Annotation) Remainder() IcetTerm {
+	return NewProcess()
+}
+
+func (a *Annotation) Minimize() IcetTerm {
+	return a
 }
 
 func (as *AnnotationSet) PrintIceT(lv int) string {
@@ -401,6 +445,14 @@ func (as *AnnotationSet) PrintIceT(lv int) string {
 		return fmt.Sprintf("%v%v", ident, strings.Join(s, ","))
 	}
 	return ""
+}
+
+func (a *AnnotationSet) Remainder() IcetTerm {
+	return NewProcess()
+}
+
+func (a *AnnotationSet) Minimize() IcetTerm {
+	return a
 }
 
 func NewAnnotationSet() *AnnotationSet {

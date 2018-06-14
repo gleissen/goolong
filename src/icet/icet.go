@@ -38,7 +38,7 @@ type IceTVisitor struct {
 	CurrentIDType    icetTerm.IDType
 	currentSwitchTag string
 	inSet            bool
-	IceTTerm         string
+	IceTTerm         icetTerm.IcetTerm
 	Comments         ast.CommentMap
 	Property         string
 	Declarations     icetTerm.Declarations
@@ -49,20 +49,16 @@ type IceTVisitor struct {
 	Parser icetcustom.CustomParser
 }
 
-func (v *IceTVisitor) PrettyPrint() string {
-	out := v.currentProgram.PrettyPrint()
-	if v.currentProccess.Len() > 0 {
-		this := v.currentProccess.PrettyPrint()
-		out = fmt.Sprintf("%v || %v", this, out)
-	}
-	return out
+func (v *IceTVisitor) CurrentProg() icetTerm.IcetTerm {
+	v.currentProgram.AddProc(v.currentProccess)
+	v.IceTTerm = v.currentProgram
+	v.currentProgram.RemoveLastProc()
+	return v.IceTTerm
 }
 
 func (v *IceTVisitor) MakeIceTTerm() string {
-	v.currentProgram.AddProc(v.currentProccess)
-	v.IceTTerm = v.currentProgram.PrintIceT(0)
-	v.currentProgram.RemoveLastProc()
-	return fmt.Sprintf("prog(raftcore,\n %v,\n \tensures(%v),\n %v)", v.Declarations.PrintIceT(1), v.Property, v.IceTTerm)
+	term := v.CurrentProg().PrintIceT(0)
+	return fmt.Sprintf("prog(raftcore,\n %v,\n \tensures(%v),\n %v)", v.Declarations.PrintIceT(1), v.Property, term)
 }
 
 func MakeNewIceTVisitor() *IceTVisitor {
@@ -75,7 +71,7 @@ func MakeNewIceTVisitor() *IceTVisitor {
 		icetTerm.Pid,
 		"",
 		false,
-		"",
+		icetTerm.NewProcess(),
 		nil,
 		"",
 		icetTerm.NewDeclarations(),
