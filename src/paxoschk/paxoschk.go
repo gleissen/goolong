@@ -7,6 +7,7 @@ import (
 	"icet"
 	"icetTerm"
 	"log"
+	"paxosproto"
 )
 
 // Parses paxos specific sends and receive methods
@@ -27,7 +28,7 @@ func (p *PaxosParser) ParseSend(name string, args []ast.Expr, procID string, idT
 		peerID := getValue(args[0])
 		myID := getValue(args[1])
 		myTerm := getValue(args[2])
-		val := fmt.Sprintf("pair(%v,%v)", myID, myTerm)
+		val := fmt.Sprintf("pair(%v,pair(%v,pair(%v, 0)))", paxosproto.PrepareType, myID, myTerm)
 		return true, &icetTerm.Send{ProcID: procID, RecipientID: peerID, RecipientType: idType, Value: val}
 	}
 	//n.SendAccept(Peer, id, myTerm, x)
@@ -36,20 +37,39 @@ func (p *PaxosParser) ParseSend(name string, args []ast.Expr, procID string, idT
 		myID := getValue(args[1])
 		myTerm := getValue(args[2])
 		x := getValue(args[3])
-		val := fmt.Sprintf("pair(%v,pair(%v,%v))", myID, myTerm, x)
+		val := fmt.Sprintf("pair(%v,pair(%v,pair(%v,%v)))", paxosproto.AcceptType, myID, myTerm, x)
 		return true, &icetTerm.Send{ProcID: procID, RecipientID: peerID, RecipientType: idType, Value: val}
 	}
 	return false, nil
 }
 
-func (p *PaxosParser) ParseReceive(name string, args []ast.Expr, fromID string, procID string, bool, getValue func(ast.Node) string) (bool, icetTerm.IcetTerm) {
+//string, []ast.Expr, string, string, bool, func(ast.Node) string
+func (p *PaxosParser) ParseReceive(name string, args []ast.Expr, fromID string, procID string, IntType string, getValue func(ast.Node) string) (bool, icetTerm.IcetTerm) {
 	//rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
 	if name == "RecvAcceptorReplyFrom" {
 		rwT := getValue(args[0])
 		rw := getValue(args[1])
 		rsuccess := getValue(args[2])
 		val := fmt.Sprintf("pair(%v,pair(%v,%v))", rwT, rw, rsuccess)
-		v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: procID, Variable: val, FromId: fromID, IsRecvFrom: true})
+		decls := icetTerm.NewDeclarations()
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", rwT, IntType))
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", rw, IntType))
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", rsuccess, IntType))
+		return true, &icetTerm.Recv{ProcID: procID, Variable: val, FromId: fromID, IsRecvFrom: true, Decls: decls}
+	}
+	// msgType, resID, t, x := n.AcceptorReceive()
+	if name == "AcceptorReceive" {
+		msgType := getValue(args[0])
+		resID := getValue(args[1])
+		t := getValue(args[2])
+		x := getValue(args[3])
+		val := fmt.Sprintf("pair(%v,pair(%v,pair(%v,%v)))", msgType, resID, t, x)
+		decls := icetTerm.NewDeclarations()
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", msgType, IntType))
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", resID, IntType))
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", t, IntType))
+		decls.AppendDecl(fmt.Sprintf("decl(%v,%v)", x, IntType))
+		return true, &icetTerm.Recv{ProcID: procID, Variable: val, FromId: fromID, IsRecvFrom: false, Decls: decls}
 	}
 	return false, nil
 }

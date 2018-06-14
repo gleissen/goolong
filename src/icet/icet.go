@@ -78,7 +78,7 @@ func MakeNewIceTVisitor() *IceTVisitor {
 		"",
 		nil,
 		"",
-		icetTerm.Declarations{Decls: make([]string, 0)},
+		icetTerm.NewDeclarations(),
 		nil,
 		make(map[string]bool),
 		make(map[string]string),
@@ -392,6 +392,10 @@ func parseSend(site *ast.CallExpr, v *IceTVisitor) {
 			v.currentProccess.AddStmt(&icetTerm.Send{ProcID: v.CurrentProcId, RecipientID: recp, Value: pair})
 		}
 		// custom sends
+		//HACK
+		if len(site.Args) > 0 {
+			_ = v.GetValue(site.Args[0])
+		}
 		ok, stmt := v.Parser.ParseSend(sel.Sel.Name, site.Args, v.CurrentProcId, v.CurrentIDType, v.GetValue)
 		if ok {
 			v.currentProccess.AddStmt(stmt)
@@ -487,6 +491,12 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
+				var IntType string
+				if v.inSet {
+					IntType = fmt.Sprintf("map(set(%v), int)", v.currentSet)
+				} else {
+					IntType = "int"
+				}
 				arg1 := v.GetValue(assign.Lhs[0])
 				if sel.Sel.Name == "Recv" {
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: arg1, IsRecvFrom: false})
@@ -499,13 +509,8 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 					l := v.GetValue(assign.Lhs[0])
 					r := v.GetValue(assign.Lhs[1])
 					pair := fmt.Sprintf("pair(%v,%v)", l, r)
-					if v.inSet {
-						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, map(set(%v), int))", l, v.currentSet))
-						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, map(set(%v), int))", r, v.currentSet))
-					} else {
-						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
-						v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
-					}
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, %v)", l, IntType))
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, %v)", r, IntType))
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: pair, IsRecvFrom: false})
 				}
 				if sel.Sel.Name == "RecvPairFrom" {
@@ -513,12 +518,16 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 					r := v.GetValue(assign.Lhs[1])
 					pair := fmt.Sprintf("pair(%v,%v)", l, r)
 					id := v.GetValue(site.Args[0])
-					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", l))
-					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,int)", r))
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,%v)", l, IntType))
+					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,%v)", r, IntType))
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: pair, FromId: id, IsRecvFrom: true})
 				}
 				// custom receives
-				ok, stmt := v.Parser.ParseReceive(sel.Sel.Name, assign.Lhs, v.GetValue(site.Args[0]), v.CurrentProcId, v.inSet, v.GetValue)
+				fromID := ""
+				if len(site.Args) > 0 {
+					fromID = v.GetValue(site.Args[0])
+				}
+				ok, stmt := v.Parser.ParseReceive(sel.Sel.Name, assign.Lhs, fromID, v.CurrentProcId, IntType, v.GetValue)
 				if ok {
 					v.currentProccess.AddStmt(stmt)
 				}
