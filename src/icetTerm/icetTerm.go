@@ -15,12 +15,13 @@ type IDType int
 type AnnotatationType int
 
 const ( // annotation types
-	Inv     AnnotatationType = iota
-	Prop                     = iota // property
-	Pre                      = iota // precondition
-	Assume                   = iota // assumtpion
-	Declare                  = iota
-	None                     = iota
+	Inv      AnnotatationType = iota
+	Prop                      = iota // property
+	Pre                       = iota // precondition
+	Assume                    = iota // assumtpion
+	Declare                   = iota
+	Grouping                  = iota
+	None                      = iota
 )
 
 const (
@@ -94,6 +95,10 @@ type Conditional struct {
 	Cond   string
 	Left   Process
 	Right  Process
+}
+
+type Group struct {
+	Proc Process
 }
 
 type Annotation struct {
@@ -427,12 +432,41 @@ func (a *Annotation) PrintIceT(lv int) string {
 	return ""
 }
 
+func (g *Group) PrintIceT(lv int) string {
+	if g.Proc.Len() > 0 {
+		ident := indentationAtLv(lv)
+		return fmt.Sprintf("%vgroup(skip, \n%v)", ident, g.Proc.PrintIceT(lv+1))
+	}
+	return ""
+}
+
+func (g *Group) Remainder() IcetTerm {
+	rem := g.Proc.Remainder().(*Process)
+	return &Group{*rem}
+}
+
+func (g *Group) Minimize() IcetTerm {
+	if IsSkip(&g.Proc) {
+		return NewProcess()
+	}
+	min := g.Proc.Minimize().(*Process)
+	return &Group{*min}
+}
+
 func (a *Annotation) Remainder() IcetTerm {
 	return NewProcess()
 }
 
 func (a *Annotation) Minimize() IcetTerm {
 	return a
+}
+
+func (a *Annotation) IsGroupStart() bool {
+	return (strings.TrimSpace(a.Annot) == "start")
+}
+
+func (a *Annotation) IsGroupEnd() bool {
+	return (strings.TrimSpace(a.Annot) == "end")
 }
 
 func (as *AnnotationSet) PrintIceT(lv int) string {

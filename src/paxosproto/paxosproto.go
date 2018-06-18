@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	PrepareType uint8 = iota
-	AcceptType        = iota
+	PrepareType uint8 = 0
+	AcceptType        = 1
 )
 
 type Prepare struct {

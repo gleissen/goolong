@@ -13,7 +13,7 @@ import (
 // Parses paxos specific sends and receive methods
 type PaxosParser struct{}
 
-func (p *PaxosParser) ParseSend(name string, args []ast.Expr, procID string, idType icetTerm.IDType, getValue func(ast.Node) string) (bool, icetTerm.IcetTerm) {
+func (p *PaxosParser) ParseSend(name string, args []ast.Expr, procID string, idType icetTerm.IDType, getValue func(ast.Node) string) (bool, *icetTerm.Send) {
 	//n.SendAcceptorReply(int(resID.Get()), wT, w, success)
 	if name == "SendAcceptorReply" {
 		id := getValue(args[0])
@@ -44,7 +44,7 @@ func (p *PaxosParser) ParseSend(name string, args []ast.Expr, procID string, idT
 }
 
 //string, []ast.Expr, string, string, bool, func(ast.Node) string
-func (p *PaxosParser) ParseReceive(name string, args []ast.Expr, fromID string, procID string, IntType string, getValue func(ast.Node) string) (bool, icetTerm.IcetTerm) {
+func (p *PaxosParser) ParseReceive(name string, args []ast.Expr, fromID string, procID string, IntType string, getValue func(ast.Node) string) (bool, *icetTerm.Recv) {
 	//rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
 	if name == "RecvAcceptorReplyFrom" {
 		rwT := getValue(args[0])
