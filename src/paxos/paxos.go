@@ -30,6 +30,9 @@ func main() {
 	if *myID < 0 || *myID >= len(peerAddresses) {
 		log.Fatal("id: index out of bounds")
 	}
+	if *term < 1 {
+		log.Fatal("term: pick a term>0.")
+	}
 
 	doneProposer := make(chan bool, 1)
 	doneAcceptor := make(chan bool, 1)
@@ -60,34 +63,81 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 	n.AssignSymSet("as", "")
 
 	// Declarations
-	myTerm := gochai.NewVar()
+	t := gochai.NewVar()
 	id := gochai.NewUInt8()
 	xT := gochai.NewVar() // highest term variable seen so far
 	x := gochai.NewVar()  // proposal value
 	ho := gochai.NewVar()
 	ready := gochai.NewVar()
 	decided := gochai.NewVar()
+	// Ghost variables
+	k := gochai.NewVar() // k = #{a ∈ as | p.t ∈ a.ts}
+	l := gochai.NewVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max ≤ p.t}
+	m := gochai.NewVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max > p.t}
+	// just to stop it from complaining..
+	fmt.Printf("%v%v%v", k, l, m)
 
-	// Initializations
-	myTerm.Assign(int32(*termArg))
+	// =====================
+	//    Initialization
+	// =====================
+
+	/*{-@ pre: and([
+					ref(t,P)>0,
+					ref(ready,P)=0,
+					ref(decided,P)=0,
+					ref(ho,P)=0,
+					ref(k,P) = 0,
+					ref(l,P) = card(as),
+					ref(m,P) = 0
+				])
+	 -@}*/
+	t.Assign(int32(*termArg))
 	xT.Assign(0)
 	x.Assign(int32(*proposalArg))
 	ho.Assign(0)
 	ready.Assign(0)
 	decided.Assign(0)
+	/*{-@ assume: forall([decl(i,int)],
+										and([
+											ref(t,i) > 0,
+											ref(m,i)=0,
+											ref(l,i) = card(as),
+											ref(k,i) = 0
+										])
+							)
+	-@}*/
 
 	// =====================
-	//    Sending Proposals
+	//    Proposal phase
 	// =====================
+
 	for Peer := range n.PeerIds {
+		// Precondition
 
+		/*{-@pre: forall([decl(i,int)],
+						implies(
+									and([
+												elem(i,ps),
+												here(i)
+									 		]),
+									and([
+									 			ref(ready, i)=0,
+												ref(decided, i)=0,
+												ref(k,i)=0,
+												ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+											])
+										)
+									)
+		-@}*/
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
-		fmt.Printf("prop: sending proposal %v and id %v to %v\n", myTerm.Get(), id.Get(), Peer)
-		n.SendPrepare(Peer, id, myTerm)
+		fmt.Printf("prop: sending proposal %v and id %v to %v\n", t.Get(), id.Get(), Peer)
+		n.SendPrepare(Peer, id, t)
 		// receive highest accepted term w_t and accepted value w
+
+		//{-@ group: start -@}
 		rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
-		fmt.Printf("prop: received answer rwT:%v and rw:%v from %v\n", rwT.Get(), rw.Get(), Peer)
+		fmt.Printf("prop: received answer rwT:%v and rw:%v from %v with %v \n", rwT.Get(), rw.Get(), Peer, rsuccess.Get())
 		// if not outdated
 		if rsuccess.Get() == 1 {
 			ho.Assign(ho.Get() + 1)
@@ -97,27 +147,65 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			xT.Assign(rwT.Get())
 			x.Assign(rw.Get())
 		}
+		//{-@ group: end -@}
 	}
+
 	if 2*int(ho.Get()) > n.NumPeers() {
 		fmt.Printf("\n\nprop: entering acceptance phase!\n\n")
+
 		// =====================
-		//    Sending Accepts
+		//  Acceptance phase
 		// =====================
+
+		/*{-@pre: forall([decl(i,int)],
+				implies(
+							and([
+								elem(i,ps),
+								ref(decided,i)=1
+							]),
+		          and([ ref(k,i) > card(as)/2,
+		                ref(ho,i) > card(as)/2,
+		                ref(ready,i)=1
+		             ])
+							)
+				)
+		-@}*/
+
+		/*{-@pre: forall([decl(i,int)],
+							implies(
+									and([
+										elem(i,ps),
+										here(i)
+										]),
+		             and([
+								 		ref(decided,i)=0,
+		                ref(k,i)=0,
+		                ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+		                ])
+								)
+					)
+				-@}*/
 		ho.Assign(0)
 		ready.Assign(1)
 
 		for Peer := range n.PeerIds {
-			fmt.Printf("prop: sending accept for value %v and ballot %v to %v.\n", myTerm.Get(), x.Get(), Peer)
-			n.SendAccept(Peer, id, myTerm, x)
-			_, _, rsuccess := n.RecvAcceptorReplyFrom(Peer)
-			fmt.Printf("prop: received reply %v from %v .\n", rsuccess.Get(), Peer)
+			/*{-@pre: ducko -@}*/
+
+			n.SendAccept(Peer, id, t, x)
+
+			fmt.Printf("prop: sending accept for value %v and ballot %v to %v.\n", t.Get(), x.Get(), Peer)
+			rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
+			fmt.Printf("prop: received reply %v from %v (also %v and %v).\n", rsuccess.Get(), Peer, rwT.Get(), rw.Get())
 			if rsuccess.Get() == 1 {
 				ho.Assign(ho.Get() + 1)
+				// ghost updates
+				k.Assign(k.Get() + 1)
+				l.Assign(l.Get() - 1)
 			}
 		}
 		if 2*int(ho.Get()) > n.NumPeers() {
 			decided.Assign(1)
-			fmt.Printf("prop: value %v for ballot %v accepted, yay!\n", x.Get(), myTerm.Get())
+			fmt.Printf("prop: value %v for ballot %v accepted, yay!\n", x.Get(), t.Get())
 		}
 	} else {
 		fmt.Printf("prop: proposal failed.\n")
@@ -149,46 +237,34 @@ func runAcceptor(peerAddresses []string) {
 	w.Assign(-1)
 	for {
 		// receive request
-		msgType, resID, t, x := n.AcceptorReceive()
+		msgType, pID, pt, px := n.AcceptorReceive()
+
 		switch msgType.Get() {
 
 		// prepare message
 		case PrepareType:
-			fmt.Printf("acc: received proposal %v from %v\n", t.Get(), resID.Get())
+			fmt.Printf("acc: received proposal %v from %v\n", pt.Get(), pID.Get())
 			success.Assign(0)
-			if t.Get() > max.Get() {
-				max.Assign(t.Get())
+			if pt.Get() > max.Get() {
+				max.Assign(pt.Get())
 				success.Assign(1)
 			}
 
 			// accept message
 		case AcceptType:
-			fmt.Printf("acc: received accept of %v with ballot %v from %v\n", x.Get(), t.Get(), resID.Get())
+			fmt.Printf("acc: received accept of %v with ballot %v from %v\n", px.Get(), pt.Get(), pID.Get())
 			success.Assign(0)
-			if t.Get() >= max.Get() {
-				wT.Assign(t.Get())
-				w.Assign(x.Get())
+			if pt.Get() >= max.Get() {
+				wT.Assign(pt.Get())
+				w.Assign(px.Get())
 				success.Assign(1)
 				fmt.Printf("acc: accepted value %v for ballot %v \n", w.Get(), wT.Get())
-
 			}
 		}
 		// Sending reply
-		fmt.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(), w.Get(), success.Get(), resID.Get())
-		n.SendAcceptorReply(int(resID.Get()), wT, w, success)
+		fmt.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(), w.Get(), success.Get(), pID.Get())
+		n.SendAcceptorReply(int(pID.Get()), wT, w, success)
 	}
 }
 
-/*{-@ ensures: forall([decl(i,int), decl(j,int)],
-			implies(
-					and([
-						elem(i,cs),
-						elem(j,cs),
-						ref(term,i)=ref(term,j),
-						ref(isLeader,j)=1,
-						ref(isLeader,i)=1
-						]),
-					i=j
-				)
-		)
--@}*/
+/*{-@ ensures: true -@}*/

@@ -1,6 +1,7 @@
 package icet
 
 import (
+	"commentmap"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -50,8 +51,10 @@ type IceTVisitor struct {
 	inSet            bool
 	IceTTerm         icetTerm.IcetTerm
 	Comments         ast.CommentMap
+	Node2Comments    map[ast.Node][]commentmap.Comment
 	Property         string
 	Declarations     icetTerm.Declarations
+	PendingStmts     []icetTerm.IcetTerm
 	fileSet          *token.FileSet
 	fileName         string
 	isGhostVar       map[string]bool
@@ -86,8 +89,10 @@ func MakeNewIceTVisitor() *IceTVisitor {
 		false,
 		icetTerm.NewProcess(),
 		nil,
+		make(map[ast.Node][]commentmap.Comment),
 		"",
 		icetTerm.NewDeclarations(),
+		make([]icetTerm.IcetTerm, 0),
 		nil,
 		"",
 		make(map[string]bool),
@@ -110,15 +115,19 @@ func main() {
 
 func (v *IceTVisitor) ExtractIcetTerm(file string) string {
 	fset := token.NewFileSet()
-	node, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
-	v.Comments = ast.NewCommentMap(fset, node, node.Comments)
 	v.fileSet = fset
 	v.fileName = file
+	node, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
 	}
-	propertySet := parseComments(v.Comments.Comments(), v.CurrentProcId, PropertyTypes)
-	v.Property = propertySet.PrintIceT(0)
+	v.Comments = ast.NewCommentMap(fset, node, node.Comments)
+	mv := commentmap.MakeCMapVisitor(v.Comments)
+	ast.Walk(mv, node)
+	mv.MapComments()
+	v.Node2Comments = mv.Node2Comment
+	v.Property = parseProperty(v)
+	fmt.Printf("property: %v", v.Property)
 	addDeclarations(v, v.Comments.Comments())
 	ast.Walk(v, node)
 	return v.MakeIceTTerm()
@@ -126,6 +135,9 @@ func (v *IceTVisitor) ExtractIcetTerm(file string) string {
 
 func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 
+	if node != nil {
+		parseAnnotations(node, v)
+	}
 	switch node.(type) {
 
 	case *ast.ExprStmt:
@@ -143,6 +155,7 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	case *ast.RangeStmt:
 		ok := parseForLoop(node.(*ast.RangeStmt), v)
 		if ok {
+			parseGrouping(node, v, End)
 			return nil // children were already traversed
 		}
 
@@ -152,29 +165,35 @@ func (v *IceTVisitor) Visit(node ast.Node) (w ast.Visitor) {
 	case *ast.IfStmt:
 		ok := parseConditional(node.(*ast.IfStmt), v)
 		if ok {
+			parseGrouping(node, v, End)
 			return nil
 		}
 
 	case *ast.SwitchStmt:
 		ok := parseSwitchStmt(node.(*ast.SwitchStmt), v)
 		if ok {
+			parseGrouping(node, v, End)
 			return nil
 		}
 
 	case *ast.CaseClause:
 		parseCaseClause(node.(*ast.CaseClause), v)
+		parseGrouping(node, v, End)
 		return nil
 
 	case *ast.ForStmt:
 		parseRepeat(node.(*ast.ForStmt), v)
+		parseGrouping(node, v, End)
 		return nil
 
 	case *ast.FuncDecl:
 		ok := parseSymSetDecl(node.(*ast.FuncDecl), v)
 		if ok {
+			parseGrouping(node, v, End)
 			return nil
 		}
 	}
+	parseGrouping(node, v, End)
 	return v
 }
 
@@ -236,27 +255,37 @@ func (v *IceTVisitor) GetValue(stmt ast.Node) string {
 
 func addDeclarations(v *IceTVisitor, comments []*ast.CommentGroup) {
 	for _, comment := range comments {
-		decl, atype := parseComment(comment)
+		decl, atype := parseComment(comment.Text())
 		if atype == icetTerm.Declare {
 			v.Declarations.AppendDecl(decl)
 		}
 	}
 }
 
-func parseAnnotations(stmt ast.Node, v *IceTVisitor) {
-	if stmt != nil {
-		comments := v.Comments.Filter(stmt)
-		annots := parseComments(comments.Comments(), v.CurrentProcId, AnnotTypes)
-		if len(annots.Annots) > 0 {
-			v.currentProccess.AddStmt(annots)
-		}
+func parseProperty(v *IceTVisitor) string {
+	var annots icetTerm.AnnotationSet
+	for node := range v.Node2Comments {
+		nodeAnnots := v.parseComments(node, PropertyTypes)
+		annots.Add(nodeAnnots.Annots...)
+	}
+	return annots.PrintIceT(0)
+}
+
+func parseAnnotations(node ast.Node, v *IceTVisitor) {
+	parseGrouping(node, v, Start)
+	v.currentProccess.AddStmts(v.PendingStmts)
+	v.PendingStmts = make([]icetTerm.IcetTerm, 0)
+	if node != nil {
+		annots := v.parseComments(node, AnnotTypes)
+		pre, post := annots.Split()
+		v.currentProccess.AddStmt(pre)
+		v.PendingStmts = append(v.PendingStmts, post)
 	}
 }
 
-func parseGrouping(stmt ast.Node, v *IceTVisitor, dir GroupDirective) {
-	if stmt != nil {
-		comments := v.Comments.Filter(stmt)
-		annots := parseComments(comments.Comments(), v.CurrentProcId, RewriteTypes)
+func parseGrouping(node ast.Node, v *IceTVisitor, dir GroupDirective) {
+	if node != nil {
+		annots := v.parseComments(node, RewriteTypes)
 		switch len(annots.Annots) {
 		case 0:
 			return
@@ -270,12 +299,13 @@ func parseGrouping(stmt ast.Node, v *IceTVisitor, dir GroupDirective) {
 
 func applyGrouping(annot icetTerm.Annotation, v *IceTVisitor, dir GroupDirective) {
 	if annot.IsGroupStart() && dir == Start {
-		assert(v.currentParent == nil, "v.currentParent == nil")
+		assert(v.currentParent == nil, "nested group starts.")
 		v.currentParent = v.currentProccess
 		v.currentProccess = icetTerm.NewProcess()
 	}
 	if annot.IsGroupEnd() && dir == End {
 		tmp := v.currentProccess
+		assert(v.currentParent != nil, "no group to end")
 		v.currentProccess = v.currentParent
 		v.currentParent = nil
 		v.currentProccess.AddStmt(&icetTerm.Group{Proc: *tmp})
@@ -309,8 +339,7 @@ func parseConstant(decl *ast.GenDecl, v *IceTVisitor) {
 	}
 }
 
-func parseComment(comment *ast.CommentGroup) (string, icetTerm.AnnotatationType) {
-	s := comment.Text()
+func parseComment(s string) (string, icetTerm.AnnotatationType) {
 	s = strings.Trim(s, "\n")
 	if strings.HasPrefix(s, ANNOTATION_START) && strings.HasSuffix(s, ANNOTATION_END) {
 		s = strings.TrimPrefix(s, ANNOTATION_START)
@@ -344,22 +373,25 @@ func parseComment(comment *ast.CommentGroup) (string, icetTerm.AnnotatationType)
 	return "", icetTerm.None
 }
 
-func parseComments(comments []*ast.CommentGroup, procId string, annotTypes []icetTerm.AnnotatationType) *icetTerm.AnnotationSet {
+func (v *IceTVisitor) parseComments(node ast.Node, annotTypes []icetTerm.AnnotatationType) *icetTerm.AnnotationSet {
 	annotations := icetTerm.NewAnnotationSet()
-	for _, comment := range comments {
-		annot, atype := parseComment(comment)
-		if containsType(atype, annotTypes) {
-			annotations.Add(icetTerm.Annotation{Annot: strings.TrimSpace(annot), Type: atype, ProcID: procId})
+	comments, exists := v.Node2Comments[node]
+	if exists {
+		for _, comment := range comments {
+			annot, atype := parseComment(comment.Comment)
+			if containsType(atype, annotTypes) {
+				annotations.Add(icetTerm.Annotation{Annot: strings.TrimSpace(annot), Type: atype, ProcID: v.CurrentProcId, Pos: comment.Pos})
+			}
 		}
+		return annotations
 	}
-	return annotations
+	return icetTerm.NewAnnotationSet()
 }
 
 func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
-		loopComments := v.Comments.Filter(loopTerm.Body)
-		invariantSet := parseComments(loopComments.Comments(), v.CurrentProcId, InvariantTypes)
+		invariantSet := v.parseComments(loopTerm.Body, InvariantTypes)
 		invariant := invariantSet.PrintIceT(0)
 		lv := copyVisitor(v)
 		lv.currentPeerID = v.GetValue(loopTerm.Key)
@@ -385,12 +417,15 @@ func copyVisitor(v *IceTVisitor) *IceTVisitor {
 	cp.CurrentProcId = v.CurrentProcId
 	cp.inSet = v.inSet
 	cp.fileSet = v.fileSet
+	cp.PendingStmts = v.PendingStmts
 	cp.Comments = v.Comments
 	cp.currentSwitchTag = v.currentSwitchTag
 	cp.currentSet = v.currentSet
+	cp.currentParent = v.currentParent
 	cp.currentPeerSet = v.currentPeerSet
 	cp.isGhostVar = v.isGhostVar
 	cp.constMap = v.constMap
+	cp.Node2Comments = v.Node2Comments
 	cp.Parser = v.Parser
 	return cp
 }
@@ -400,25 +435,20 @@ func parseAssign(expr *ast.ExprStmt, v *IceTVisitor) bool {
 	if ok {
 		sel, ok := site.Fun.(*ast.SelectorExpr)
 		if ok {
-			parseGrouping(expr, v, Start)
 			// variable.Assign(value)
 			if sel.Sel.Name == "Assign" {
-				parseAnnotations(expr, v)
 				variable := v.GetValue(sel.X)
 				value := parseExpression(site.Args[0], v)
 				if value != NDET {
 					v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.CurrentProcId, Var: variable, Value: value, IsMap: false})
 				}
-				parseGrouping(expr, v, End)
 				return true
 				// _map.Put(key,value)
 			} else if sel.Sel.Name == "Put" {
-				parseAnnotations(expr, v)
 				_map := v.GetValue(sel.X)
 				key := v.GetValue(site.Args[0])
 				value := parseExpression(site.Args[1], v)
 				v.currentProccess.AddStmt(&icetTerm.Assign{ProcID: v.CurrentProcId, Var: _map, Value: value, Key: key, IsMap: true})
-				parseGrouping(expr, v, End)
 				return true
 			}
 		}
@@ -541,8 +571,6 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 		if ok {
 			sel, ok := site.Fun.(*ast.SelectorExpr)
 			if ok {
-				parseGrouping(assign, v, Start)
-				parseAnnotations(assign, v)
 				var IntType string
 				if v.inSet {
 					IntType = fmt.Sprintf("map(set(%v), int)", v.currentSet)
@@ -552,12 +580,10 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 				arg1 := v.GetValue(assign.Lhs[0])
 				if sel.Sel.Name == "Recv" {
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: arg1, IsRecvFrom: false})
-					parseGrouping(assign, v, End)
 				}
 				if sel.Sel.Name == "RecvFrom" {
 					id := v.GetValue(site.Args[0])
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: arg1, FromId: id, IsRecvFrom: true})
-					parseGrouping(assign, v, End)
 				}
 				if sel.Sel.Name == "RecvPair" {
 					l := v.GetValue(assign.Lhs[0])
@@ -566,7 +592,6 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, %v)", l, IntType))
 					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v, %v)", r, IntType))
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: pair, IsRecvFrom: false})
-					parseGrouping(assign, v, End)
 				}
 				if sel.Sel.Name == "RecvPairFrom" {
 					l := v.GetValue(assign.Lhs[0])
@@ -576,7 +601,6 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,%v)", l, IntType))
 					v.Declarations.AppendDecl(fmt.Sprintf("decl(%v,%v)", r, IntType))
 					v.currentProccess.AddStmt(&icetTerm.Recv{ProcID: v.CurrentProcId, Variable: pair, FromId: id, IsRecvFrom: true})
-					parseGrouping(assign, v, End)
 				}
 				// custom receives
 				fromID := ""
@@ -587,7 +611,6 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 				if ok {
 					v.currentProccess.AddStmt(stmt)
 					v.Declarations.Append(&stmt.Decls)
-					parseGrouping(assign, v, End)
 				}
 			}
 		}
@@ -597,7 +620,6 @@ func parseRecv(assign *ast.AssignStmt, v *IceTVisitor) {
 // parsing conditionals
 func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 	//
-	parseGrouping(ifStmt, v, Start)
 	//parse condition
 	var vr *IceTVisitor
 	cond := parseExpression(ifStmt.Cond, v)
@@ -614,14 +636,12 @@ func parseConditional(ifStmt *ast.IfStmt, v *IceTVisitor) bool {
 		rightproc = icetTerm.NewProcess()
 	}
 	if !vl.currentProccess.IsEmpty() {
-		parseAnnotations(ifStmt, v)
 		IceTifStmt := &icetTerm.Conditional{ProcID: v.CurrentProcId, Cond: cond, Left: *vl.currentProccess, Right: *rightproc}
 		v.currentProccess.AddStmt(IceTifStmt)
 		v.Declarations.Append(&vl.Declarations)
 		if vr != nil {
 			v.Declarations.Append(&vr.Declarations)
 		}
-		parseGrouping(ifStmt, v, End)
 		return true
 	}
 	return false
@@ -632,7 +652,6 @@ func parseSwitchStmt(switchStmt *ast.SwitchStmt, v *IceTVisitor) bool {
 	vb.currentSwitchTag = parseExpression(switchStmt.Tag, v)
 	ast.Walk(vb, switchStmt.Body)
 	if vb != nil {
-		parseAnnotations(switchStmt, v)
 		v.currentProccess.AddProc(vb.currentProccess)
 		v.Declarations.Append(&vb.Declarations)
 		return true
@@ -728,7 +747,7 @@ func stringRemoveQuotes(s string) string {
 
 func assert(p bool, err string) {
 	if !p {
-		log.Panic("Assertion %v violated", err)
+		log.Panic("Error: ", err)
 	}
 }
 

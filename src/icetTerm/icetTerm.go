@@ -1,6 +1,7 @@
 package icetTerm
 
 import (
+	"commentmap"
 	"fmt"
 	"strings"
 )
@@ -105,6 +106,7 @@ type Annotation struct {
 	Annot  string
 	Type   AnnotatationType
 	ProcID string
+	Pos    commentmap.RelPos
 }
 
 type AnnotationSet struct {
@@ -266,7 +268,7 @@ func (l *ForLoop) Remainder() IcetTerm {
 }
 
 func (l *ForLoop) Minimize() IcetTerm {
-	minStmts := l.Minimize().(*Process)
+	minStmts := l.Stmts.Minimize().(*Process)
 	if IsSkip(minStmts) {
 		return NewProcess()
 	}
@@ -374,11 +376,16 @@ func (proc *Process) IsEmpty() bool {
 }
 
 func (proc *Process) AddStmt(stmt IcetTerm) {
-	proc.stmts = append(proc.stmts, stmt)
+	if !IsSkip(stmt.Minimize()) {
+		proc.stmts = append(proc.stmts, stmt)
+	}
+
 }
 
-func (proc *Process) AddStmts(stmt []IcetTerm) {
-	proc.stmts = append(proc.stmts, stmt...)
+func (proc *Process) AddStmts(stmts []IcetTerm) {
+	for _, stmt := range stmts {
+		proc.AddStmt(stmt)
+	}
 }
 
 func (proc *Process) AddProc(proc1 *Process) {
@@ -458,6 +465,9 @@ func (a *Annotation) Remainder() IcetTerm {
 }
 
 func (a *Annotation) Minimize() IcetTerm {
+	if a.Annot == "" {
+		return NewProcess()
+	}
 	return a
 }
 
@@ -467,6 +477,20 @@ func (a *Annotation) IsGroupStart() bool {
 
 func (a *Annotation) IsGroupEnd() bool {
 	return (strings.TrimSpace(a.Annot) == "end")
+}
+
+func (a *AnnotationSet) Split() (*AnnotationSet, *AnnotationSet) {
+	pre := NewAnnotationSet()
+	post := NewAnnotationSet()
+	for _, annot := range a.Annots {
+		switch annot.Pos {
+		case commentmap.Before:
+			pre.Add(annot)
+		case commentmap.After:
+			post.Add(annot)
+		}
+	}
+	return pre, post
 }
 
 func (as *AnnotationSet) PrintIceT(lv int) string {
@@ -486,6 +510,9 @@ func (a *AnnotationSet) Remainder() IcetTerm {
 }
 
 func (a *AnnotationSet) Minimize() IcetTerm {
+	if len(a.Annots) == 0 {
+		return NewProcess()
+	}
 	return a
 }
 
