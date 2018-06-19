@@ -92,7 +92,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 				])
 	 -@}*/
 	t.Assign(int32(*termArg))
-	xT.Assign(-1)
+	xT.Assign(0)
 	x.Assign(int32(*proposalArg))
 	ho.Assign(0)
 	ready.Assign(0)
@@ -206,7 +206,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			              )
 					-@}*/
 
-			/*{-@pre: forall([decl(i,int),decl(j,int)],
+			/*{-@pre: forall([decl(i,int), decl(j,int)],
 			                          implies(
 																	and([
 																		elem(i,ps),
@@ -217,9 +217,11 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			                            ref(wT,j) < ref(t,i)
 																)
 													)
-						-@}*/
+			-@}*/
 
-			/*{-@pre: forall([decl(qa,int),decl(qp,int)],
+			// main invariant
+
+			/*{-@pre: forall([decl(qa,int), decl(qp,int)],
 			                          implies(
 																	and([
 																		elem(qa,as),
@@ -233,10 +235,11 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 													)
 			-@}*/
 
+			// Nodes have disjoint tickets
+
 			//{-@ assume: forall([decl(i,int)], implies(ref(t,i)=ref(t,P), i=P)) -@}
 
-			// these facts are derived from cardinalities
-
+			// This fact derived from the cardility invariant over the proposal phase
 			/*{-@assume: forall([decl(i,int)],
 					implies(
 						and([
@@ -256,7 +259,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			//{-@assume: elem(a0,as) -@}
 
 			/*{-@assume: implies(
-											and([0 =< ref(xT,P)]),
+											and([0 < ref(xT,P)]),
 											and([
 														ref(x,P) = ref(w,a0),
 														ref(xT,P) = ref(wT,a0)
@@ -274,7 +277,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 																]),
 																and([
 																	ref(t,i) =< ref(xT,P),
-																	0 =< ref(xT,P)
+																	0 < ref(xT,P)
 																])
 														)
 											)
@@ -374,29 +377,29 @@ func runAcceptor(peerAddresses []string) {
 }
 
 /*{-@ ensures: forall([
-									decl(aa,int),
 									decl(p1,int),
 									decl(p2,int)
 									],
                   implies(
                       and([
-												elem(aa,as),
+											  elem(a0,as),
                         elem(p1,ps),
                         elem(p2,ps),
                         ref(decided,p1)=1,
                         ref(decided,p2)=1,
-                              implies(and([
-																					ref(k,p1) > card(as)/2,
-                                    			ref(k,p2) > card(as)/2
-																			]),
-                                    	and([
-																					ref(t,p1) =< ref(wT,aa),
-																					ref(t,p2) =< ref(wT,aa)
-																				])
-															),
-                              0 =< ref(l, p1),
-															0 =< ref(l ,p2)
-															]),
-                              ref(x,p1) = ref(x,p2))
+                        implies(
+														and([
+																	ref(k,p1) > card(as)/2,
+                                  ref(k,p2) > card(as)/2
+															 ]),
+                            and([
+																	ref(t,p1) =< ref(wT,a0),
+																	ref(t,p2) =< ref(wT,a0)
+														    ])
+													),
+                          0 =< ref(l, p1),
+													0 =< ref(l ,p2)
+											  ]),
+                        ref(x,p1) = ref(x,p2))
 									)
 	-@}*/
