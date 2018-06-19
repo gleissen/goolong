@@ -127,7 +127,6 @@ func (v *IceTVisitor) ExtractIcetTerm(file string) string {
 	mv.MapComments()
 	v.Node2Comments = mv.Node2Comment
 	v.Property = parseProperty(v)
-	fmt.Printf("property: %v", v.Property)
 	addDeclarations(v, v.Comments.Comments())
 	ast.Walk(v, node)
 	return v.MakeIceTTerm()

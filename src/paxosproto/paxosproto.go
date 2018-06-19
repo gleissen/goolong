@@ -2,7 +2,6 @@ package paxosproto
 
 import (
 	"fastrpc"
-	"fmt"
 	"gochai"
 )
 
@@ -77,11 +76,10 @@ func (n *PaxosNode) AcceptorReceive() (msgType *gochai.UInt8, id *gochai.UInt8, 
 	switch msg.(type) {
 	case *Prepare:
 		prep := msg.(*Prepare)
-		fmt.Printf("acc: received prop %v\n", prep)
+
 		return gochai.NewUInt8_(PrepareType), gochai.NewUInt8_(prep.id), gochai.NewIntVar_(prep.t), gochai.NewIntVar_(-1)
 	case *Accept:
 		acc := msg.(*Accept)
-		fmt.Printf("acc: received acc %v\n", acc)
 		return gochai.NewUInt8_(AcceptType), gochai.NewUInt8_(acc.id), gochai.NewIntVar_(acc.t), gochai.NewIntVar_(acc.x)
 	}
 	return nil, nil, nil, nil

@@ -283,7 +283,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			n.SendAccept(Peer, id, t, x)
 			fmt.Printf("prop: sending accept for value %v and ballot %v to %v.\n", t.Get(), x.Get(), Peer)
 
-			/*{-@ group: start -@}*/
+			//{-@ group: start -@}
 			rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
 			fmt.Printf("prop: received reply %v from %v (also %v and %v).\n", rsuccess.Get(), Peer, rwT.Get(), rw.Get())
 			if rsuccess.Get() == 1 {
@@ -292,9 +292,22 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 				k.Assign(k.Get() + 1)
 				l.Assign(l.Get() - 1)
 			}
-			/*{-@ group: end -@}*/
+			//{-@ group: end -@}
+
 		}
 		if 2*int(ho.Get()) > n.NumPeers() {
+
+			/*{-@pre: forall([decl(i,int)],
+			             implies(
+									 		and([elem(i,ps),here(i)]),
+			                and([
+													ref(ready,i)=1,
+			                    ref(ho,i) =< ref(k,i),
+			                    ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+			                   ])
+										)
+			          )
+			-@}*/
 			decided.Assign(1)
 			fmt.Printf("prop: value %v for ballot %v accepted, yay!\n", x.Get(), t.Get())
 		}
@@ -323,8 +336,10 @@ func runAcceptor(peerAddresses []string) {
 	w := gochai.NewVar()
 	success := gochai.NewUInt8()
 	// Initializations
-	max.Assign(-1)
-	wT.Assign(-1)
+
+	/*{-@pre: ref(wT,A) = 0 -@}*/
+	max.Assign(0)
+	wT.Assign(0)
 	w.Assign(-1)
 	for {
 		// receive request
@@ -358,4 +373,30 @@ func runAcceptor(peerAddresses []string) {
 	}
 }
 
-/*{-@ ensures: true -@}*/
+/*{-@ ensures: forall([
+									decl(aa,int),
+									decl(p1,int),
+									decl(p2,int)
+									],
+                  implies(
+                      and([
+												elem(aa,as),
+                        elem(p1,ps),
+                        elem(p2,ps),
+                        ref(decided,p1)=1,
+                        ref(decided,p2)=1,
+                              implies(and([
+																					ref(k,p1) > card(as)/2,
+                                    			ref(k,p2) > card(as)/2
+																			]),
+                                    	and([
+																					ref(t,p1) =< ref(wT,aa),
+																					ref(t,p2) =< ref(wT,aa)
+																				])
+															),
+                              0 =< ref(l, p1),
+															0 =< ref(l ,p2)
+															]),
+                              ref(x,p1) = ref(x,p2))
+									)
+	-@}*/
