@@ -92,7 +92,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 				])
 	 -@}*/
 	t.Assign(int32(*termArg))
-	xT.Assign(0)
+	xT.Assign(-1)
 	x.Assign(int32(*proposalArg))
 	ho.Assign(0)
 	ready.Assign(0)
@@ -189,11 +189,101 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 		ready.Assign(1)
 
 		for Peer := range n.PeerIds {
-			/*{-@pre: ducko -@}*/
+
+			/*{-@pre: forall([decl(i,int)],
+			              	implies(
+														and([
+															elem(i,ps),
+															here(i)
+														]),
+			                      and([
+															ref(ready,i)=1,
+			                        ref(decided,i)=0,
+			                        ref(ho,i) =< ref(k,i),
+			                        ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+			                      ])
+											   )
+			              )
+					-@}*/
+
+			/*{-@pre: forall([decl(i,int),decl(j,int)],
+			                          implies(
+																	and([
+																		elem(i,ps),
+																		elem(j,as),
+																		ref(l,i) > card(as)/2,
+																		ref(k,i)=0
+																	]),
+			                            ref(wT,j) < ref(t,i)
+																)
+													)
+						-@}*/
+
+			/*{-@pre: forall([decl(qa,int),decl(qp,int)],
+			                          implies(
+																	and([
+																		elem(qa,as),
+																		elem(qp,ps),
+																		ref(ready,qp)=1,
+																		ref(t,qp) =< ref(wT,qa),
+																		ref(k,qp)+ref(l,qp) > card(as)/2
+																		]),
+			                             ref(w,qa)=ref(x,qp)
+																)
+													)
+			-@}*/
+
+			//{-@ assume: forall([decl(i,int)], implies(ref(t,i)=ref(t,P), i=P)) -@}
+
+			// these facts are derived from cardinalities
+
+			/*{-@assume: forall([decl(i,int)],
+					implies(
+						and([
+									elem(i,ps),
+									ref(l,i) > card(as)/2
+							]),
+							or([
+									ref(ready,P)=0,
+									ref(t,P) < ref(t,i)
+								])
+							)
+				)
+			-@}*/
+
+			//{-@declare: decl(a0, int) -@}
+
+			//{-@assume: elem(a0,as) -@}
+
+			/*{-@assume: implies(
+											and([0 =< ref(xT,P)]),
+											and([
+														ref(x,P) = ref(w,a0),
+														ref(xT,P) = ref(wT,a0)
+											])
+										)
+			-@}*/
+
+			/*{-@assume: forall([decl(i,int)],
+														implies(
+																and([
+																	elem(i,ps),
+																	ref(ready,i)=1,
+																	ref(k,i)+ref(l,i) > card(as)/2,
+																	ref(ready,P)=1
+																]),
+																and([
+																	ref(t,i) =< ref(xT,P),
+																	0 =< ref(xT,P)
+																])
+														)
+											)
+			-@}*/
 
 			n.SendAccept(Peer, id, t, x)
-
 			fmt.Printf("prop: sending accept for value %v and ballot %v to %v.\n", t.Get(), x.Get(), Peer)
+
+			/*{-@ group: start -@}*/
 			rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
 			fmt.Printf("prop: received reply %v from %v (also %v and %v).\n", rsuccess.Get(), Peer, rwT.Get(), rw.Get())
 			if rsuccess.Get() == 1 {
@@ -202,6 +292,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 				k.Assign(k.Get() + 1)
 				l.Assign(l.Get() - 1)
 			}
+			/*{-@ group: end -@}*/
 		}
 		if 2*int(ho.Get()) > n.NumPeers() {
 			decided.Assign(1)
