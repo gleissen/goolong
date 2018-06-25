@@ -1,12 +1,16 @@
-package paxosreplica
+package main
 
 import (
 	"clientproto"
 	"dlog"
 	"flag"
+	"fmt"
 	"gochai"
 	"log"
-	"paxosproto"
+	"multiproto"
+	"os"
+	"os/signal"
+	"state"
 )
 
 // =============
@@ -17,35 +21,74 @@ const (
 	PrepareType uint8 = 0
 	AcceptType        = 1
 )
-
-type InstanceStatus int
+const INSTANCE_SIZE = 20000
 
 var myID = flag.Int("id", 0, "Replica id")
 var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaults to localhost.")
 
-var propNode *paxosproto.PaxosNode
+var propNode *multiproto.PaxosNode
 var doneProp = make(chan bool, 1)
 
-func Run() {
+type InstanceStatus int
+
+const (
+	PREPARING InstanceStatus = iota
+	PREPARED
+	ACCEPTED
+)
+
+type Instance struct {
+	CommandId int32
+	Command   state.Command
+	Status    InstanceStatus
+}
+
+var Log []*Instance = make([]*Instance, INSTANCE_SIZE) // log of all executed commands
+
+func MkInstance(prop *clientproto.Propose) *Instance {
+	return &Instance{prop.CommandId, prop.Command, PREPARING}
+}
+
+func catchKill(interrupt chan os.Signal, nodes []*multiproto.PaxosNode) {
+	<-interrupt
+	fmt.Println("Caught signal; exiting")
+	for _, n := range nodes {
+		n.Shutdown()
+	}
+}
+
+func main() {
 	flag.Parse()
 	peerAddresses := flag.Args()
 	if *myID < 0 || *myID >= len(peerAddresses) {
 		log.Fatal("id: index out of bounds")
 	}
 
-	propNode := paxosproto.NewPaxosNode("p", *myID, *myAddr, peerAddresses, false)
-	propNode.Run()
+	propNode := multiproto.NewPaxosNode("p", *myID, *myAddr, peerAddresses, false)
+	go propNode.Run()
+	accNode := multiproto.NewPaxosNode("c", *myID, *myAddr, peerAddresses, true)
+	go accNode.Run()
 
-	go runAcceptor(peerAddresses)
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt)
+	go catchKill(interrupt, []*multiproto.PaxosNode{propNode, accNode})
+
+	go runAcceptor(peerAddresses, accNode)
+
 	for !propNode.Stop {
 		proposal := <-propNode.ProposeChan
 		dlog.Printf("Proposal with op %d for intance %v\n", proposal.Command.Op, proposal.CommandId)
-		runProposer(propNode, propNode.MakeUniqueBallot(proposal.CommandId), proposal)
-		v := proposal.Command.Execute(propNode.State)
-		dlog.Printf("Executing command %v for key %v with id %v and result %v \n", proposal.Command.Op, proposal.Command.K, proposal.CommandId, v)
-		propNode.Log[propNode.CrtInstance] = paxosproto.MkInstance(proposal)
+		var ok uint8 = 0
+		decided := runProposer(propNode, propNode.MakeUniqueBallot(1), proposal, propNode.CrtInstance)
+		if decided {
+			ok = 1
+			v := proposal.Command.Execute(propNode.State)
+			dlog.Printf("Executing command %v for key %v with id %v and result %v \n", proposal.Command.Op, proposal.Command.K, proposal.CommandId, v)
+			//propNode.Log[propNode.CrtInstance] = multiproto.MkInstance(proposal)
+		}
+		go propNode.ReplyPropose(&clientproto.ProposeReply{OK: ok, CommandId: proposal.CommandId}, proposal.Wire)
 		propNode.CrtInstance++
-		go propNode.ReplyPropose(&clientproto.ProposeReply{OK: 1, CommandId: proposal.CommandId}, proposal.Wire)
+
 	}
 }
 
@@ -53,7 +96,7 @@ func Run() {
 //  Proposer
 // ==========
 
-func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Propose) {
+func runProposer(n *multiproto.PaxosNode, ballot int32, proposal *multiproto.Propose, instance int32) bool {
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("as", "")
 
@@ -65,6 +108,7 @@ func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Pr
 	ho := gochai.NewVar()
 	ready := gochai.NewVar()
 	decided := gochai.NewVar()
+	inst := gochai.NewVar()
 	// Ghost variables
 	k := gochai.NewGhostVar() // k = #{a ∈ as | p.t ∈ a.ts}
 	l := gochai.NewGhostVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max ≤ p.t}
@@ -85,12 +129,13 @@ func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Pr
 				])
 	 -@}*/
 
-	t.Assign(termArg)
+	t.Assign(ballot)
 	xT.Assign(0)
 	x.Assign(int32(proposal.CommandId))
 	ho.Assign(0)
 	ready.Assign(0)
 	decided.Assign(0)
+	inst.Assign(instance)
 	/*{-@ assume: forall([decl(i,int)],
 										and([
 											ref(t,i) > 0,
@@ -126,7 +171,7 @@ func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Pr
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
 		dlog.Printf("prop: sending proposal %v and id %v to %v\n", t.Get(), id.Get(), Peer)
-		n.SendPrepare(Peer, id, t)
+		n.SendPrepare(Peer, id, t, inst)
 		// receive highest accepted term w_t and accepted value w
 
 		//{-@ group: start -@}
@@ -274,7 +319,7 @@ func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Pr
 											)
 			-@}*/
 
-			n.SendAccept(Peer, id, t, x)
+			n.SendAccept(Peer, id, t, x, inst, proposal)
 			dlog.Printf("prop: sending accept for value %v and ballot %v to %v.\n", t.Get(), x.Get(), Peer)
 
 			//{-@ group: start -@}
@@ -309,59 +354,57 @@ func runProposer(n *paxosproto.PaxosNode, termArg int32, proposal *paxosproto.Pr
 		dlog.Printf("prop: proposal failed.\n")
 	}
 	//--end
+	return (decided.Get() == 1)
 }
 
 // ============
 //   Acceptor
 // ============
 
-func runAcceptor(peerAddresses []string) {
-	n := paxosproto.NewPaxosNode("c", *myID, *myAddr, peerAddresses, true)
-	n.Run()
+func runAcceptor(peerAddresses []string, n *multiproto.PaxosNode) {
+
 	// -- Assigning sets --
 	n.StartSymSet("as", "a")
 	n.AssignSymSet("ps", "")
 
 	// Declarations
-	max := gochai.NewVar()
-	wT := gochai.NewVar()
-	w := gochai.NewVar()
+	max := gochai.NewMap()
+	wT := gochai.NewMap()
+	w := gochai.NewMap()
 	success := gochai.NewUInt8()
 	// Initializations
 
 	/*{-@pre: ref(wT,A) = 0 -@}*/
-	max.Assign(0)
-	wT.Assign(0)
-	w.Assign(-1)
+	// assume maps are initialized to 0
 	for !n.Stop {
 		// receive request
-		msgType, pID, pt, px := n.AcceptorReceive()
+		msgType, pID, inst, pt, px := n.AcceptorReceive()
 
 		switch msgType.Get() {
 
 		// prepare message
 		case PrepareType:
-			dlog.Printf("acc: received proposal %v from %v\n", pt.Get(), pID.Get())
+			dlog.Printf("acc: received proposal %v from %v for instance %v\n", pt.Get(), pID.Get(), inst.Get())
 			success.Assign(0)
-			if pt.Get() > max.Get() {
-				max.Assign(pt.Get())
+			if pt.Get() > max.Get(inst.Get()) {
+				max.Put(inst.Get(), pt.Get())
 				success.Assign(1)
 			}
 
-			// accept message
+		// accept message
 		case AcceptType:
 			dlog.Printf("acc: received accept of %v with ballot %v from %v\n", px.Get(), pt.Get(), pID.Get())
 			success.Assign(0)
-			if pt.Get() >= max.Get() {
-				wT.Assign(pt.Get())
-				w.Assign(px.Get())
+			if pt.Get() >= max.Get(inst.Get()) {
+				wT.Put(inst.Get(), pt.Get())
+				w.Put(inst.Get(), px.Get())
 				success.Assign(1)
-				dlog.Printf("acc: accepted value %v for ballot %v \n", w.Get(), wT.Get())
+				dlog.Printf("acc: accepted value %v for ballot %v \n", w.Get(inst.Get()), wT.Get(inst.Get()))
 			}
 		}
 		// Sending reply
-		dlog.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(), w.Get(), success.Get(), pID.Get())
-		n.SendAcceptorReply(int(pID.Get()), wT, w, success)
+		dlog.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(inst.Get()), w.Get(inst.Get()), success.Get(), pID.Get())
+		n.SendAcceptorReply(int(pID.Get()), wT.Get(inst.Get()), w.Get(inst.Get()), success.Get())
 	}
 }
 

@@ -1,6 +1,8 @@
 package clientproto
 
-import "io"
+import (
+	"io"
+)
 
 func (t *Propose) Marshal(wire io.Writer) {
 	var b [8]byte
