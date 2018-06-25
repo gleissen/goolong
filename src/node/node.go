@@ -1,13 +1,16 @@
 package node
 
-import "fmt"
-import "log"
-import "net"
-import "time"
-import "encoding/binary"
-import "bufio"
-import "io"
-import "fastrpc"
+import (
+	"bufio"
+	"encoding/binary"
+	"fastrpc"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"time"
+)
 
 const CHAN_BUFFER_SIZE = 200000
 
@@ -31,6 +34,7 @@ type Node struct {
 	Done      chan bool
 	rpcTable  map[uint8]*RPCPair
 	rpcCode   uint8
+	Stop      bool
 }
 
 func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node {
@@ -50,7 +54,8 @@ func MakeNode(id int, myaddr string, peerAddrList []string, isServer bool) *Node
 		make(chan bool, 1),
 		make(chan bool, 1),
 		make(map[uint8]*RPCPair),
-		0}
+		0,
+		false}
 	return n
 }
 
@@ -72,6 +77,7 @@ func makePeerIds(N int) []int {
 
 // Connect to peers
 func (n *Node) Connect() {
+	fmt.Printf("node: waiting for connections\n")
 	if !n.IsServer {
 		n.waitForConnections() //(done)
 	} else {
@@ -97,7 +103,7 @@ func (n *Node) Connect() {
 		}
 	}
 	//<-done
-	log.Printf("Replica id: %d. Done connecting.\n", n.id)
+	fmt.Printf("Replica id: %d. Done connecting.\n", n.id)
 	n.Connected <- true
 	// listen for messages from each peer node
 	for rid, reader := range n.Readers {
@@ -109,7 +115,13 @@ func (n *Node) Connect() {
 func (n *Node) waitForConnections() { //done chan bool) {
 	var b [4]byte
 	bs := b[:4]
-	n.Listener, _ = net.Listen("tcp", n.MyAddr)
+	var err error
+	n.Listener, err = net.Listen("tcp", n.MyAddr)
+	if err != nil {
+		log.Printf("error creating listener:%v\n", err)
+		os.Exit(1)
+	}
+
 	for i := 0; i < n.numPeers; i++ {
 		conn, err := n.Listener.Accept()
 		if err != nil {
