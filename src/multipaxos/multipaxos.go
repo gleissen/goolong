@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/signal"
 	"state"
+	"sync"
+	"time"
 )
 
 // =============
@@ -22,34 +24,32 @@ const (
 	AcceptType        = 1
 )
 const INSTANCE_SIZE = 20000
+const MAX_BATCH = 5000
 
-var myID = flag.Int("id", 0, "Replica id")
+var myID = flag.Int("id", 0, "Replica id. Defaults to 0.")
 var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaults to localhost.")
+var batching = flag.Bool("b", false, "Batching Proposals. Defaults to false.")
 
-var propNode *multiproto.PaxosNode
+var propNode *multiproto.MultiNode
 var doneProp = make(chan bool, 1)
+var logMutex = &sync.Mutex{}
 
 type InstanceStatus int
 
 const (
-	PREPARING InstanceStatus = iota
-	PREPARED
+	PREPARED InstanceStatus = iota
 	ACCEPTED
+	COMMITTED
 )
 
 type Instance struct {
-	CommandId int32
-	Command   state.Command
-	Status    InstanceStatus
+	Commands []state.Command
+	Status   InstanceStatus
 }
 
 var Log []*Instance = make([]*Instance, INSTANCE_SIZE) // log of all executed commands
 
-func MkInstance(prop *clientproto.Propose) *Instance {
-	return &Instance{prop.CommandId, prop.Command, PREPARING}
-}
-
-func catchKill(interrupt chan os.Signal, nodes []*multiproto.PaxosNode) {
+func catchKill(interrupt chan os.Signal, nodes []*multiproto.MultiNode) {
 	<-interrupt
 	fmt.Println("Caught signal; exiting")
 	for _, n := range nodes {
@@ -64,31 +64,81 @@ func main() {
 		log.Fatal("id: index out of bounds")
 	}
 
-	propNode := multiproto.NewPaxosNode("p", *myID, *myAddr, peerAddresses, false)
+	propNode := multiproto.NewMultiNode("p", *myID, *myAddr, peerAddresses, false)
 	go propNode.Run()
-	accNode := multiproto.NewPaxosNode("c", *myID, *myAddr, peerAddresses, true)
+	accNode := multiproto.NewMultiNode("c", *myID, *myAddr, peerAddresses, true)
 	go accNode.Run()
-
+	go applyCommits(accNode)
+	go executeCommands(accNode)
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt)
-	go catchKill(interrupt, []*multiproto.PaxosNode{propNode, accNode})
+	go catchKill(interrupt, []*multiproto.MultiNode{propNode, accNode})
 
 	go runAcceptor(peerAddresses, accNode)
 
 	for !propNode.Stop {
 		proposal := <-propNode.ProposeChan
-		dlog.Printf("Proposal with op %d for intance %v\n", proposal.Command.Op, proposal.CommandId)
+		/*
+			if *batching {
+				batchSize := len(propNode.ProposeChan) + 1
+				if batchSize > MAX_BATCH {
+					batchSize = MAX_BATCH
+				}
+				dlog.Printf("Batched %d\n", batchSize)
+				cmds := make([]state.Command, batchSize)
+				proposals := make([]*multiproto.Propose, batchSize)
+				cmds[0] = proposal.Command
+				proposals[0] = proposal
+			} */
+
+		dlog.Printf("Proposal with op %d for intance %v\n", proposal.Command.Op, propNode.CrtInstance)
 		var ok uint8 = 0
-		decided := runProposer(propNode, propNode.MakeUniqueBallot(1), proposal, propNode.CrtInstance)
+		ballot := propNode.MakeUniqueBallot(1)
+		decided := runProposer(propNode, ballot, proposal, propNode.CrtInstance)
 		if decided {
 			ok = 1
-			v := proposal.Command.Execute(propNode.State)
-			dlog.Printf("Executing command %v for key %v with id %v and result %v \n", proposal.Command.Op, proposal.Command.K, proposal.CommandId, v)
-			//propNode.Log[propNode.CrtInstance] = multiproto.MkInstance(proposal)
 		}
 		go propNode.ReplyPropose(&clientproto.ProposeReply{OK: ok, CommandId: proposal.CommandId}, proposal.Wire)
+		propNode.BroadcastCommit(ballot, propNode.CrtInstance)
 		propNode.CrtInstance++
+	}
+}
 
+// Commits
+
+func updateCommittedUpTo(n *multiproto.MultiNode) {
+	for Log[n.CommittedUpTo+1] != nil &&
+		Log[n.CommittedUpTo+1].Status == COMMITTED {
+		n.CommittedUpTo++
+	}
+}
+
+func applyCommits(n *multiproto.MultiNode) {
+	for !n.Stop {
+		inst, t := n.RecvCommit()
+		logMutex.Lock()
+		dlog.Printf("Committed instance %v for ballot %v", inst, t)
+		Log[inst].Status = COMMITTED
+		updateCommittedUpTo(n)
+		logMutex.Unlock()
+	}
+}
+
+func executeCommands(n *multiproto.MultiNode) {
+	i := int32(0)
+	for !n.Stop {
+		executed := false
+		for i <= n.CommittedUpTo {
+			for _, cmd := range Log[i].Commands {
+				dlog.Printf("Executing command %v for key:%v and value:%v", cmd.Op, cmd.K, cmd.V)
+				cmd.Execute(n.State)
+			}
+			i++
+			executed = true
+		}
+		if !executed {
+			time.Sleep(1000 * 1000)
+		}
 	}
 }
 
@@ -96,7 +146,7 @@ func main() {
 //  Proposer
 // ==========
 
-func runProposer(n *multiproto.PaxosNode, ballot int32, proposal *multiproto.Propose, instance int32) bool {
+func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Propose, instance int32) bool {
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("as", "")
 
@@ -170,7 +220,7 @@ func runProposer(n *multiproto.PaxosNode, ballot int32, proposal *multiproto.Pro
 		-@}*/
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
-		dlog.Printf("prop: sending proposal %v and id %v to %v\n", t.Get(), id.Get(), Peer)
+		dlog.Printf("prop: sending proposal %v for isntance %v to %v\n", t.Get(), inst.Get(), Peer)
 		n.SendPrepare(Peer, id, t, inst)
 		// receive highest accepted term w_t and accepted value w
 
@@ -320,7 +370,7 @@ func runProposer(n *multiproto.PaxosNode, ballot int32, proposal *multiproto.Pro
 			-@}*/
 
 			n.SendAccept(Peer, id, t, x, inst, proposal)
-			dlog.Printf("prop: sending accept for value %v and ballot %v to %v.\n", t.Get(), x.Get(), Peer)
+			dlog.Printf("prop: sending accept for value %v in instance %v with ballot %v to %v.\n", x.Get(), inst.Get(), t.Get(), Peer)
 
 			//{-@ group: start -@}
 			rwT, rw, rsuccess := n.RecvAcceptorReplyFrom(Peer)
@@ -361,7 +411,7 @@ func runProposer(n *multiproto.PaxosNode, ballot int32, proposal *multiproto.Pro
 //   Acceptor
 // ============
 
-func runAcceptor(peerAddresses []string, n *multiproto.PaxosNode) {
+func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 
 	// -- Assigning sets --
 	n.StartSymSet("as", "a")
@@ -378,7 +428,7 @@ func runAcceptor(peerAddresses []string, n *multiproto.PaxosNode) {
 	// assume maps are initialized to 0
 	for !n.Stop {
 		// receive request
-		msgType, pID, inst, pt, px := n.AcceptorReceive()
+		msgType, pID, inst, pt, px, commands := n.AcceptorReceive()
 
 		switch msgType.Get() {
 
@@ -389,6 +439,9 @@ func runAcceptor(peerAddresses []string, n *multiproto.PaxosNode) {
 			if pt.Get() > max.Get(inst.Get()) {
 				max.Put(inst.Get(), pt.Get())
 				success.Assign(1)
+				logMutex.Lock()
+				Log[inst.Get()] = &Instance{commands, PREPARED}
+				logMutex.Unlock()
 			}
 
 		// accept message
@@ -399,6 +452,9 @@ func runAcceptor(peerAddresses []string, n *multiproto.PaxosNode) {
 				wT.Put(inst.Get(), pt.Get())
 				w.Put(inst.Get(), px.Get())
 				success.Assign(1)
+				logMutex.Lock()
+				Log[inst.Get()] = &Instance{commands, ACCEPTED}
+				logMutex.Unlock()
 				dlog.Printf("acc: accepted value %v for ballot %v \n", w.Get(inst.Get()), wT.Get(inst.Get()))
 			}
 		}

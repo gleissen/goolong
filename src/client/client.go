@@ -124,7 +124,7 @@ func waitReplies(readers []*bufio.Reader, leader int, n int, done chan bool) {
 			e = true
 			continue
 		}
-		//fmt.Printf("got reply #%v; ok: %v\n", i, reply.OK)
+		dlog.Printf("got reply #%v; ok: %v\n", i, reply.OK)
 		if reply.OK != 0 {
 			successful[leader]++
 		}
