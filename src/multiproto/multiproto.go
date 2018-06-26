@@ -212,14 +212,16 @@ func (n *MultiNode) clientListener(conn net.Conn) {
 		}
 	}
 	if err != nil && err != io.EOF {
-		log.Println("Error when reading from client connection:", err)
+		dlog.Println("Error when reading from client connection:", err)
 	}
 }
 
-func (n *MultiNode) ReplyPropose(reply uint8, batch *Batch) {
+func (n *MultiNode) ReplyPropose(ok uint8, batch *Batch) {
 	for _, prop := range batch.Props {
-		reply := &clientproto.ProposeReply{OK: reply, CommandId: prop.CommandId}
-		reply.Marshal(prop.Wire)
-		prop.Wire.Flush()
+		reply := &clientproto.ProposeReply{OK: ok, CommandId: prop.CommandId}
+		wire := prop.Wire
+		reply.Marshal(wire)
+		wire.Flush()
+		dlog.Printf("Sent reply %v for proposal with id %v\n.", ok, prop.CommandId)
 	}
 }

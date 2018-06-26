@@ -32,6 +32,7 @@ var myID = flag.Int("id", 0, "Replica id. Defaults to 0.")
 var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaults to localhost.")
 var batching = flag.Bool("b", false, "Batching Proposals. Defaults to false.")
 var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
+var logfile = flag.String("log", "", "logfile")
 
 var propNode *multiproto.MultiNode
 var doneProp = make(chan bool, 1)
@@ -81,6 +82,14 @@ func main() {
 		}
 		pprof.StartCPUProfile(f)
 	}
+	if *logfile != "" {
+		f, err := os.OpenFile(*logfile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		log.SetOutput(f)
+	}
 
 	propNode := multiproto.NewMultiNode("p", *myID, *myAddr, peerAddresses, false)
 	go propNode.Run()
@@ -97,8 +106,8 @@ func main() {
 
 	go runAcceptor(peerAddresses, accNode)
 
-	var batch *multiproto.Batch
 	for !propNode.Stop {
+		var batch *multiproto.Batch
 		proposal := <-propNode.ProposeChan
 		if *batching {
 			batchSize := len(propNode.ProposeChan) + 1
@@ -132,7 +141,7 @@ func main() {
 		if decided {
 			ok = 1
 		}
-		go propNode.ReplyPropose(ok, batch)
+		propNode.ReplyPropose(ok, batch)
 		propNode.BroadcastCommit(ballot, propNode.CrtInstance)
 		propNode.CrtInstance++
 	}
