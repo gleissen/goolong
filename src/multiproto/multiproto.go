@@ -50,6 +50,12 @@ type Commit struct {
 	t    int32
 }
 
+type Batch struct {
+	Id       int32
+	Commands []state.Command
+	Props    []*Propose
+}
+
 type MultiNode struct {
 	*gochai.ChaiNode // extends ChaiNode
 	prepareRPC       uint8
@@ -117,10 +123,8 @@ func (n *MultiNode) SendPrepare(id int, repId *gochai.UInt8, term *gochai.IntVar
 	n.NSend(id, n.prepareRPC, msg)
 }
 
-func (n *MultiNode) SendAccept(id int, repId *gochai.UInt8, term *gochai.IntVar, val *gochai.IntVar, inst *gochai.IntVar, proposal *Propose) {
-	cmd := new([]state.Command)
-	*cmd = append(*cmd, proposal.Command)
-	msg := &Accept{id: repId.Get(), t: term.Get(), x: val.Get(), inst: inst.Get(), Command: *cmd}
+func (n *MultiNode) SendAccept(id int, repId *gochai.UInt8, term *gochai.IntVar, val *gochai.IntVar, inst *gochai.IntVar, batch *Batch) {
+	msg := &Accept{id: repId.Get(), t: term.Get(), x: val.Get(), inst: inst.Get(), Command: batch.Commands}
 	n.NSend(id, n.acceptRPC, msg)
 }
 
@@ -212,7 +216,10 @@ func (n *MultiNode) clientListener(conn net.Conn) {
 	}
 }
 
-func (n *MultiNode) ReplyPropose(reply *clientproto.ProposeReply, w *bufio.Writer) {
-	reply.Marshal(w)
-	w.Flush()
+func (n *MultiNode) ReplyPropose(reply uint8, batch *Batch) {
+	for _, prop := range batch.Props {
+		reply := &clientproto.ProposeReply{OK: reply, CommandId: prop.CommandId}
+		reply.Marshal(prop.Wire)
+		prop.Wire.Flush()
+	}
 }

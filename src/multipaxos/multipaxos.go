@@ -1,16 +1,18 @@
 package main
 
 import (
-	"clientproto"
 	"dlog"
 	"flag"
 	"fmt"
 	"gochai"
+	"hash/adler32"
 	"log"
 	"multiproto"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"state"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -29,6 +31,7 @@ const MAX_BATCH = 5000
 var myID = flag.Int("id", 0, "Replica id. Defaults to 0.")
 var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaults to localhost.")
 var batching = flag.Bool("b", false, "Batching Proposals. Defaults to false.")
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to file")
 
 var propNode *multiproto.MultiNode
 var doneProp = make(chan bool, 1)
@@ -52,9 +55,17 @@ var Log []*Instance = make([]*Instance, INSTANCE_SIZE) // log of all executed co
 func catchKill(interrupt chan os.Signal, nodes []*multiproto.MultiNode) {
 	<-interrupt
 	fmt.Println("Caught signal; exiting")
+	pprof.StopCPUProfile()
 	for _, n := range nodes {
 		n.Shutdown()
 	}
+	os.Exit(0)
+}
+
+func makeBatch(size int) *multiproto.Batch {
+	cmds := make([]state.Command, size)
+	proposals := make([]*multiproto.Propose, size)
+	return &multiproto.Batch{Commands: cmds, Props: proposals}
 }
 
 func main() {
@@ -63,42 +74,65 @@ func main() {
 	if *myID < 0 || *myID >= len(peerAddresses) {
 		log.Fatal("id: index out of bounds")
 	}
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+	}
 
 	propNode := multiproto.NewMultiNode("p", *myID, *myAddr, peerAddresses, false)
 	go propNode.Run()
+
 	accNode := multiproto.NewMultiNode("c", *myID, *myAddr, peerAddresses, true)
 	go accNode.Run()
+
 	go applyCommits(accNode)
 	go executeCommands(accNode)
+
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt)
 	go catchKill(interrupt, []*multiproto.MultiNode{propNode, accNode})
 
 	go runAcceptor(peerAddresses, accNode)
 
+	var batch *multiproto.Batch
 	for !propNode.Stop {
 		proposal := <-propNode.ProposeChan
-		/*
-			if *batching {
-				batchSize := len(propNode.ProposeChan) + 1
-				if batchSize > MAX_BATCH {
-					batchSize = MAX_BATCH
-				}
-				dlog.Printf("Batched %d\n", batchSize)
-				cmds := make([]state.Command, batchSize)
-				proposals := make([]*multiproto.Propose, batchSize)
-				cmds[0] = proposal.Command
-				proposals[0] = proposal
-			} */
+		if *batching {
+			batchSize := len(propNode.ProposeChan) + 1
+			dlog.Printf("Creating batch sized %v\n", batchSize)
+			if batchSize > MAX_BATCH {
+				batchSize = MAX_BATCH
+			}
+			dlog.Printf("Batched %d\n", batchSize)
+			batch = makeBatch(batchSize)
+			batch.Commands[0] = proposal.Command
+			batch.Props[0] = proposal
+			id := ""
+			for i := 1; i < batchSize; i++ {
+				prop := <-propNode.ProposeChan
+				batch.Commands[i] = prop.Command
+				batch.Props[i] = prop
+				id += strconv.Itoa(int(prop.CommandId))
+			}
+			batch.Id = int32(adler32.Checksum([]byte(id)))
+		} else {
+			batch = makeBatch(1)
+			batch.Commands[0] = proposal.Command
+			batch.Props[0] = proposal
+			batch.Id = proposal.CommandId
+		}
 
 		dlog.Printf("Proposal with op %d for intance %v\n", proposal.Command.Op, propNode.CrtInstance)
 		var ok uint8 = 0
 		ballot := propNode.MakeUniqueBallot(1)
-		decided := runProposer(propNode, ballot, proposal, propNode.CrtInstance)
+		decided := runProposer(propNode, ballot, batch, propNode.CrtInstance)
 		if decided {
 			ok = 1
 		}
-		go propNode.ReplyPropose(&clientproto.ProposeReply{OK: ok, CommandId: proposal.CommandId}, proposal.Wire)
+		go propNode.ReplyPropose(ok, batch)
 		propNode.BroadcastCommit(ballot, propNode.CrtInstance)
 		propNode.CrtInstance++
 	}
@@ -146,7 +180,7 @@ func executeCommands(n *multiproto.MultiNode) {
 //  Proposer
 // ==========
 
-func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Propose, instance int32) bool {
+func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch, instance int32) bool {
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("as", "")
 
@@ -160,10 +194,9 @@ func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Pro
 	decided := gochai.NewVar()
 	inst := gochai.NewVar()
 	// Ghost variables
-	k := gochai.NewGhostVar() // k = #{a ∈ as | p.t ∈ a.ts}
-	l := gochai.NewGhostVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max ≤ p.t}
-	m := gochai.NewGhostVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max > p.t}
-	dlog.Printf("%v", m)
+	//k := gochai.NewGhostVar() // k = #{a ∈ as | p.t ∈ a.ts}
+	//l := gochai.NewGhostVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max ≤ p.t}
+	//m := gochai.NewGhostVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max > p.t}
 	// =====================
 	//    Initialization
 	// =====================
@@ -181,7 +214,7 @@ func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Pro
 
 	t.Assign(ballot)
 	xT.Assign(0)
-	x.Assign(int32(proposal.CommandId))
+	x.Assign(int32(batch.Id))
 	ho.Assign(0)
 	ready.Assign(0)
 	decided.Assign(0)
@@ -369,7 +402,7 @@ func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Pro
 											)
 			-@}*/
 
-			n.SendAccept(Peer, id, t, x, inst, proposal)
+			n.SendAccept(Peer, id, t, x, inst, batch)
 			dlog.Printf("prop: sending accept for value %v in instance %v with ballot %v to %v.\n", x.Get(), inst.Get(), t.Get(), Peer)
 
 			//{-@ group: start -@}
@@ -378,8 +411,8 @@ func runProposer(n *multiproto.MultiNode, ballot int32, proposal *multiproto.Pro
 			if rsuccess.Get() == 1 {
 				ho.Assign(ho.Get() + 1)
 				// ghost updates
-				k.Assign(k.Get() + 1)
-				l.Assign(l.Get() - 1)
+				//k.Assign(k.Get() + 1)
+				//l.Assign(l.Get() - 1)
 			}
 			//{-@ group: end -@}
 
@@ -439,9 +472,9 @@ func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 			if pt.Get() > max.Get(inst.Get()) {
 				max.Put(inst.Get(), pt.Get())
 				success.Assign(1)
-				logMutex.Lock()
-				Log[inst.Get()] = &Instance{commands, PREPARED}
-				logMutex.Unlock()
+				//logMutex.Lock()
+				//Log[inst.Get()] = &Instance{commands, PREPARED}
+				//logMutex.Unlock()
 			}
 
 		// accept message
