@@ -9,6 +9,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"os"
 	"state"
 	"time"
 )
@@ -17,6 +18,7 @@ var rounds *int = flag.Int("r", 1, "Split the total number of requests into this
 var reqsNb *int = flag.Int("q", 5000, "Total number of requests. Defaults to 5000.")
 var writes *int = flag.Int("w", 100, "Percentage of updates (writes). Defaults to 100%.")
 var conflicts *int = flag.Int("c", -1, "Percentage of conflicts. Defaults to 0%")
+var logfile = flag.String("log", "", "logfile")
 
 var N int
 var successful []int
@@ -27,6 +29,14 @@ func main() {
 	N = len(replicaList)
 	if *conflicts > 100 {
 		log.Fatalf("Conflicts percentage must be between 0 and 100.\n")
+	}
+	if *logfile != "" {
+		f, err := os.OpenFile(*logfile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer f.Close()
+		log.SetOutput(f)
 	}
 
 	put := make([]bool, *reqsNb)
@@ -98,6 +108,7 @@ func main() {
 		after := time.Now()
 		fmt.Printf("Round took %v\n", after.Sub(before))
 		if err {
+			dlog.Printf("error: trying new leader.\n")
 			leader = (leader + 1) % N
 		}
 		id++
@@ -119,8 +130,9 @@ func waitReplies(readers []*bufio.Reader, leader int, n int, done chan bool) {
 
 	reply := new(clientproto.ProposeReply)
 	for i := 0; i < n; i++ {
+		dlog.Printf("Waiting for reply from:%v\n", leader)
 		if err := reply.Unmarshal(readers[leader]); err != nil {
-			fmt.Println("Error when reading:", err)
+			dlog.Println("Error when reading:", err)
 			e = true
 			continue
 		}

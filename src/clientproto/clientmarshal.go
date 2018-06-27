@@ -1,6 +1,7 @@
 package clientproto
 
 import (
+	"dlog"
 	"io"
 )
 
@@ -18,7 +19,7 @@ func (t *Propose) Marshal(wire io.Writer) {
 }
 
 func (t *Propose) Unmarshal(wire io.Reader) error {
-	var b [8]byte
+	var b [4]byte
 	var bs []byte
 	bs = b[:4]
 	if _, err := io.ReadAtLeast(wire, bs, 4); err != nil {
@@ -49,7 +50,9 @@ func (t *ProposeReply) Unmarshal(wire io.Reader) error {
 	if _, err := io.ReadAtLeast(wire, bs, 5); err != nil {
 		return err
 	}
+	dlog.Printf("Unmarshaling propreply.\n")
 	t.OK = uint8(bs[0])
 	t.CommandId = int32((uint32(bs[1]) | (uint32(bs[2]) << 8) | (uint32(bs[3]) << 16) | (uint32(bs[4]) << 24)))
+	dlog.Printf("done.\n")
 	return nil
 }
