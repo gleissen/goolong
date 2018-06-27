@@ -3,6 +3,7 @@ package paxosproto
 import (
 	"fastrpc"
 	"gochai"
+	"state"
 )
 
 const (
@@ -25,6 +26,12 @@ type Accept struct {
 	id uint8
 	t  int32
 	x  int32
+}
+
+type Commit struct {
+	inst    int32
+	t       int32
+	Command []state.Command
 }
 
 type PaxosNode struct {

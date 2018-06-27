@@ -8,11 +8,11 @@ const (
 	GET
 )
 
-type Value int64
+type Value int32
 
 const NIL Value = 0
 
-type Key int64
+type Key int32
 
 type Command struct {
 	Op Operation

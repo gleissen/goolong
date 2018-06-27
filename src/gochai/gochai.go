@@ -200,7 +200,6 @@ func (n *ChaiNode) Start() {
 }
 
 func (n *ChaiNode) Shutdown() {
-	n.Listener.Close()
 	n.Done <- true
 	n.Stop = true
 }
