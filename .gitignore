@@ -1,4 +1,5 @@
 log[0-9]*
+logc
 
 .DS_Store
 *.[56789ao]

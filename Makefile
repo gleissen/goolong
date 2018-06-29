@@ -3,28 +3,19 @@ GO         = env GOPATH="$(THIS_DIR)" go
 GO_INSTALL = $(GO) install
 BIN_DIR    = $(THIS_DIR)/bin
 
-BINARIES   = bin/twopc bin/icet bin/paxos bin/multipaxos
-COMMANDS   = twopc-coord twopc-db1 twopc-db2 \
-			 twopc-icet
+NAMES    = twopc paxos multipaxos client
+BINARIES = $(patsubst %,bin/%,$(NAMES))
 
-.PHONY: $(COMMANDS) clean
+.PHONY: clean
 
 all: $(BINARIES)
 
-$(BINARIES):bin/%: 
+.SECONDEXPANSION: 
+bin/%: MODULENAME = $(notdir $@)
+bin/%: BINPREQ    = src/$(MODULENAME)/$(MODULENAME).go
+
+$(BINARIES): bin/%: $$(BINPREQ)
 	$(GO_INSTALL) $*
-
-twopc-coord: bin/twopc
-	$(BIN_DIR)/twopc ":7071" ":7072"
-
-twopc-db1: bin/twopc
-	$(BIN_DIR)/twopc -coord=false -id=1 -addr=":7071" ":7070"
-
-twopc-db2: bin/twopc
-	$(BIN_DIR)/twopc -coord=false -id=2 -addr=":7072" ":7070"
-
-twopc-icet: bin/icet
-	$(BIN_DIR)/icet $(THIS_DIR)/src/twopc/twopc.go
 
 clean:
 	$(GO) clean -i $(patsubst bin/%,%,$(BINARIES))
