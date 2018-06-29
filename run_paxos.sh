@@ -14,10 +14,11 @@ blue "running eval ..."
 ADDR="127.0.0.1"
 
 ADDRS=( "$ADDR:7070" "$ADDR:7071" "$ADDR:7072" )
+LOG_FILES=( "log0" "log1" "log2" )
 
-bin/multipaxos -b -addr "$ADDR:7070" -id 0 -log "log0" ${ADDRS[@]} &
-bin/multipaxos -b -addr "$ADDR:7071" -id 1 -log "log1" ${ADDRS[@]} &
-bin/multipaxos -b -addr "$ADDR:7072" -id 2 -log "log2" ${ADDRS[@]} &
+for ((i = 1; i <= ${#ADDRS}; i++ )); do
+	bin/multipaxos -b -addr "$ADDRS[$i]" -id $((i - 1)) -log "$LOG_FILES[$i]" ${ADDRS[@]} &
+done
 
 blue "sleeping for $t seconds ..."
 sleep $((t + 2))
