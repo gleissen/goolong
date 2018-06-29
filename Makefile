@@ -3,7 +3,7 @@ GO         = env GOPATH="$(THIS_DIR)" go
 GO_INSTALL = $(GO) install
 BIN_DIR    = $(THIS_DIR)/bin
 
-BINARIES   = bin/twopc bin/icet
+BINARIES   = bin/twopc bin/icet bin/paxos bin/multipaxos
 COMMANDS   = twopc-coord twopc-db1 twopc-db2 \
 			 twopc-icet
 
