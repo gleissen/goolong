@@ -16,7 +16,7 @@ fi
 
 awkscript='
 /^Round took/ {
-  val  = substr($3, 1, length($3) - 1);
+  val  = $3;
   sum += val;
   n   += 1;
   printf("%-3d %g\n", n, val);
