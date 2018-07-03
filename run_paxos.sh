@@ -41,10 +41,6 @@ bin/client -log 'logc' \
 	$CONFLICT_PERC $REQUEST_COUNT $ROUND_COUNT $WRITE_PERC \
 	${ADDRS[@]}
 
-# blue '################################################################################'
-# blue 'Press any key to continue...'; 
-# blue '################################################################################'
-# read -k1 -s
 pkill -P $$
 sleep 1
 
