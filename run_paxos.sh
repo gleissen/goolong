@@ -31,8 +31,10 @@ LOG_FILES=( "log0" "log1" "log2" )
 
 blue "running multi paxos with ${#ADDRS} servers and a client ..."
 
+make -C ${0:A:h}
+
 for ((i = 1; i <= ${#ADDRS}; i++)); do
-	bin/multipaxos $BATCH -addr "$ADDRS[$i]" -id $((i - 1)) ${ADDRS[@]} &
+	bin/multipaxos $BATCH -addr "$ADDRS[$i]" -id $((i - 1)) -log "log$i" ${ADDRS[@]} &
 done
 
 sleep 3

@@ -1,6 +1,12 @@
 log[0-9]*
 logc
 
+/client
+/multipaxos
+/paxos
+/twopc
+
+
 .DS_Store
 *.[56789ao]
 *.a[56789o]

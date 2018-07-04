@@ -1,5 +1,6 @@
 THIS_DIR   = $(dir $(realpath $(firstword $(MAKEFILE_LIST))))
 GO         = env GOPATH="$(THIS_DIR)" go
+GO_BUILD   = $(GO) build
 GO_INSTALL = $(GO) install
 BIN_DIR    = $(THIS_DIR)/bin
 
@@ -15,6 +16,7 @@ bin/%: MODULENAME = $(notdir $@)
 bin/%: BINPREQ    = src/$(MODULENAME)/$(MODULENAME).go
 
 $(BINARIES): bin/%: $$(BINPREQ)
+	$(GO_BUILD) $*
 	$(GO_INSTALL) $*
 
 clean:
