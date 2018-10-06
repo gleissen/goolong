@@ -16,18 +16,18 @@ type IDType int
 type AnnotatationType int
 
 const ( // annotation types
-	Inv      AnnotatationType = iota
-	Prop                      = iota // property
-	Pre                       = iota // precondition
-	Assume                    = iota // assumtpion
-	Declare                   = iota
-	Grouping                  = iota
-	None                      = iota
+	Inv    AnnotatationType = iota
+	Prop                    // property
+	Pre                     // precondition
+	Assume                  // assumtpion
+	Declare
+	Grouping
+	None
 )
 
 const (
-	Pid      IDType = iota
-	Variable        = iota
+	Pid IDType = iota
+	Variable
 )
 
 type IcetTerm interface {

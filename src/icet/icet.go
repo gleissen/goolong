@@ -35,7 +35,7 @@ type GroupDirective int
 
 const (
 	Start GroupDirective = iota
-	End                  = iota
+	End
 )
 
 type IceTVisitor struct {

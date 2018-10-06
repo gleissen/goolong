@@ -134,12 +134,13 @@ func waitReplies(readers []*bufio.Reader, leader int, n int, done chan bool) {
 		if err := reply.Unmarshal(readers[leader]); err != nil {
 			dlog.Println("Error when reading:", err)
 			e = true
-			continue
+			break
 		}
 		dlog.Printf("got reply #%v; ok: %v\n", i, reply.OK)
 		if reply.OK != 0 {
 			successful[leader]++
 		}
 	}
+
 	done <- e
 }
