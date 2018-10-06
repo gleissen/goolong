@@ -19,6 +19,7 @@ var reqsNb *int = flag.Int("q", 5000, "Total number of requests. Defaults to 500
 var writes *int = flag.Int("w", 100, "Percentage of updates (writes). Defaults to 100%.")
 var conflicts *int = flag.Int("c", -1, "Percentage of conflicts. Defaults to 0%")
 var logfile = flag.String("log", "", "logfile")
+var batch = flag.Int("batch", 100, "Commands to send before flush.")
 
 var N int
 var successful []int
@@ -98,7 +99,9 @@ func main() {
 			args.Command.V = state.Value(i)
 			writers[leader].WriteByte(clientproto.PROPOSE)
 			args.Marshal(writers[leader])
-			writers[leader].Flush()
+			if i%*batch == 0 {
+				writers[leader].Flush()
+			}
 			id++
 		}
 		for i := 0; i < N; i++ {
@@ -106,7 +109,7 @@ func main() {
 		}
 		err := <-done
 		after := time.Now()
-		fmt.Printf("Round took %v\n", after.Sub(before))
+		fmt.Printf("Round took %v\n", after.Sub(before).Seconds())
 		if err {
 			dlog.Printf("error: trying new leader.\n")
 			leader = (leader + 1) % N
@@ -115,7 +118,7 @@ func main() {
 
 	}
 	after_total := time.Now()
-	fmt.Printf("Test took %v\n", after_total.Sub(before_total))
+	fmt.Printf("Test took %v\n", after_total.Sub(before_total).Seconds())
 	s := 0
 	for _, succ := range successful {
 		s += succ
