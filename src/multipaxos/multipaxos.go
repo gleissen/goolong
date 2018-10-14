@@ -203,9 +203,9 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 	decided := gochai.NewVar()
 	inst := gochai.NewVar()
 	// Ghost variables
-	k := gochai.NewVar() // k = #{a ∈ as | p.t ∈ a.ts}
-	l := gochai.NewVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) ≤ p.t}
-	m := gochai.NewVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) > p.t}
+	k := gochai.NewNoOpVar() // k = #{a ∈ as | p.t ∈ a.ts}
+	l := gochai.NewNoOpVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) ≤ p.t}
+	m := gochai.NewNoOpVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) > p.t}
 	dlog.Printf("k,l,m:=%v,%v,%v\n", k.Get(), l.Get(), m.Get())
 	// =====================
 	//    Initialization

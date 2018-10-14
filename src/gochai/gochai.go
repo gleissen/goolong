@@ -36,6 +36,9 @@ type UInt8 struct {
 type GhostVar struct {
 }
 
+type NoOpVar struct {
+}
+
 type IntPair struct {
 	L *IntVar
 	R *IntVar
@@ -97,7 +100,7 @@ func NewIntVar_(v int32) *IntVar {
 	return &IntVar{thisVar: v}
 }
 
-// ghost variables
+// ghost variables: refer to another processes state; not executed
 
 func NewGhostVar() *GhostVar {
 	return &GhostVar{}
@@ -107,6 +110,19 @@ func (v *GhostVar) Assign(val int32) { //have no runtime effect
 }
 
 func (v *GhostVar) Get() int32 {
+	return 0
+}
+
+// no-op var: refer to own state; not exectuted
+
+func NewNoOpVar() *NoOpVar {
+	return &NoOpVar{}
+}
+
+func (v *NoOpVar) Assign(val int32) { //have no runtime effect
+}
+
+func (v *NoOpVar) Get() int32 {
 	return 0
 }
 
