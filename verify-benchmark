@@ -12,6 +12,7 @@ GOCHAI_DIR="${THIS_DIR}"
 GOCHAI_SRC_DIR="${GOCHAI_DIR}/src"
 
 CHECKER="${GOCHAI_DIR}/bin/paxoschk"
+MP_CHECKER="${GOCHAI_DIR}/bin/multipaxoschk"
 
 BRISKIT_DIR="${THIS_DIR}/../Brisk-VCGen"
 
@@ -72,12 +73,21 @@ verify_go_file() {
 	blue "Checking Go implementation of $name:"
 	blue "($go_file)"
 
-	$CHECKER "$go_file" > "$icet_file"
+	local ts=$(date +'%s%N')
+
+	if [[ "$name" == "multi-paxos" ]]; then
+		$MP_CHECKER "$go_file" > "$icet_file"
+	else
+		$CHECKER "$go_file" > "$icet_file"
+	fi
 	echo "saved .icet file to $icet_file"
 
 	pushd $BRISKIT_DIR
 	./briskit "$icet_file"
 	popd
+
+	local tt=$((($(date +'%s%N') - $ts)/1000000))
+	echo "Time taken: $tt milliseconds"
 
 	echo
 }
