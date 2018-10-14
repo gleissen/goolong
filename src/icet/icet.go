@@ -223,6 +223,15 @@ func (v *IceTVisitor) GetValue(stmt ast.Node) string {
 				v.CurrentIDType = icetTerm.Variable
 				return sel.X.(*ast.Ident).Name
 			}
+			if sel.Sel.Name == "GetKey" {
+				v.CurrentIDType = icetTerm.Variable
+				_map := sel.X.(*ast.Ident).Name
+				if v.inSet {
+					_map = fmt.Sprintf("ref(%v,%v)", _map, v.CurrentProcId)
+				}
+				_key := parseExpression(site.Args[0], v)
+				return fmt.Sprintf("ref(%v,%v)", _map, _key)
+			}
 			if sel.Sel.Name == "MyId" {
 				return v.CurrentProcId
 			}
@@ -329,7 +338,7 @@ func parseConstant(decl *ast.GenDecl, v *IceTVisitor) {
 	if decl.Tok == token.CONST {
 		for _, spec := range decl.Specs {
 			valSpec, ok := spec.(*ast.ValueSpec)
-			if ok {
+			if ok && len(valSpec.Values) > 0 {
 				constant := v.GetValue(valSpec.Names[0])
 				value := v.GetValue(valSpec.Values[0])
 				v.constMap[constant] = value

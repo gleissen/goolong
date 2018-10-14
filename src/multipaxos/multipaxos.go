@@ -137,7 +137,7 @@ func main() {
 		dlog.Printf("Proposal with op %d for intance %v\n", proposal.Command.Op, propNode.CrtInstance)
 		var ok uint8 = 0
 		ballot := propNode.MakeUniqueBallot(1)
-		decided := runProposer(propNode, ballot, batch, propNode.CrtInstance)
+		decided := runProposer(propNode, &ballot, batch, propNode.CrtInstance)
 		if decided {
 			ok = 1
 		}
@@ -189,7 +189,7 @@ func executeCommands(n *multiproto.MultiNode) {
 //  Proposer
 // ==========
 
-func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch, instance int32) bool {
+func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch, instance int32) bool {
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("as", "")
 
@@ -203,9 +203,10 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 	decided := gochai.NewVar()
 	inst := gochai.NewVar()
 	// Ghost variables
-	//k := gochai.NewGhostVar() // k = #{a ∈ as | p.t ∈ a.ts}
-	//l := gochai.NewGhostVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max ≤ p.t}
-	//m := gochai.NewGhostVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max > p.t}
+	k := gochai.NewVar() // k = #{a ∈ as | p.t ∈ a.ts}
+	l := gochai.NewVar() // l = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) ≤ p.t}
+	m := gochai.NewVar() // m = #{a ∈ as | p.t ∉ a.ts ∧ a.max(p.inst) > p.t}
+	dlog.Printf("k,l,m:=%v,%v,%v\n", k.Get(), l.Get(), m.Get())
 	// =====================
 	//    Initialization
 	// =====================
@@ -221,7 +222,7 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 				])
 	 -@}*/
 
-	t.Assign(ballot)
+	t.Assign(int32(*ballot))
 	xT.Assign(0)
 	x.Assign(int32(batch.Id))
 	ho.Assign(0)
@@ -262,7 +263,7 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 		-@}*/
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
-		dlog.Printf("prop: sending proposal %v for isntance %v to %v\n", t.Get(), inst.Get(), Peer)
+		dlog.Printf("prop: sending proposal %v for instance %v to %v\n", t.Get(), inst.Get(), Peer)
 		n.SendPrepare(Peer, id, t, inst)
 		// receive highest accepted term w_t and accepted value w
 
@@ -343,31 +344,27 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 																		ref(l,i) > card(as)/2,
 																		ref(k,i)=0
 																	]),
-			                            ref(wT,j) < ref(t,i)
+			                            ref(ref(wT,j),ref(inst,i)) < ref(t,i)
 																)
 													)
 			-@}*/
 
-			// main invariant
 			/*{-@pre: forall([decl(qa,int), decl(qp,int)],
 			                          implies(
 																	and([
 																		elem(qa,as),
 																		elem(qp,ps),
 																		ref(ready,qp)=1,
-																		ref(t,qp) =< ref(wT,qa),
+																		ref(t,qp) =< ref(ref(wT,qa),ref(inst,qp)),
 																		ref(k,qp)+ref(l,qp) > card(as)/2
 																		]),
-			                             ref(w,qa)=ref(x,qp)
-																)
-													)
+			                             ref(ref(w,qa),ref(inst,qp))=ref(x,qp)
+																	 )
+												)
 			-@}*/
-
-			// Nodes have disjoint tickets
 
 			//{-@ assume: forall([decl(i,int)], implies(ref(t,i)=ref(t,P), i=P)) -@}
 
-			// This fact derived from the cardility invariant over the proposal phase
 			/*{-@assume: forall([decl(i,int)],
 					implies(
 						and([
@@ -384,13 +381,13 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 
 			//{-@declare: decl(a0, int) -@}
 
-			//{-@assume: elem(a0,as) -@}
+			//{-@assume: elem(a0, as) -@}
 
 			/*{-@assume: implies(
 											and([0 < ref(xT,P)]),
 											and([
-														ref(x,P) = ref(w,a0),
-														ref(xT,P) = ref(wT,a0)
+														ref(x,P) = ref(ref(w,a0),ref(inst,P)),
+														ref(xT,P) = ref(ref(wT,a0), ref(inst,P))
 											])
 										)
 			-@}*/
@@ -420,24 +417,26 @@ func runProposer(n *multiproto.MultiNode, ballot int32, batch *multiproto.Batch,
 			if rsuccess.Get() == 1 {
 				ho.Assign(ho.Get() + 1)
 				// ghost updates
-				//k.Assign(k.Get() + 1)
-				//l.Assign(l.Get() - 1)
+				k.Assign(k.Get() + 1)
+				l.Assign(l.Get() - 1)
 			}
 			//{-@ group: end -@}
 
 		}
 		if 2*int(ho.Get()) > n.NumPeers() {
 
-			/*{-@pre: forall([decl(i,int)],
-			             implies(
-									 		and([elem(i,ps),here(i)]),
-			                and([
-													ref(ready,i)=1,
-			                    ref(ho,i) =< ref(k,i),
-			                    ref(k,i) + ref(l,i) + ref(m,i) = card(as)
-			                   ])
-										)
-			          )
+			/*{-@pre: forall([decl(i,int),decl(j,int)],
+						   and([
+						   implies(
+							   and([elem(i,ps),here(i)]),
+							   and([
+								ref(ready,i)=1,
+								ref(ho,i) =< ref(k,i),
+								ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+							       ])
+							  )
+						      ])
+						  )
 			-@}*/
 			decided.Assign(1)
 			dlog.Printf("prop: value %v for ballot %v accepted.\n", x.Get(), t.Get())
@@ -459,6 +458,10 @@ func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 	n.StartSymSet("as", "a")
 	n.AssignSymSet("ps", "")
 
+	/*{-@pre: forall([decl(i,int),decl(j,int)], ref(ref(wT,j),i) = 0) -@}*/
+
+	/*{-@assume: forall([decl(i,int),decl(j,int)], ref(ref(wT,j),i) = 0) -@}*/
+
 	// Declarations
 	max := gochai.NewMap()
 	wT := gochai.NewMap()
@@ -466,70 +469,66 @@ func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 	success := gochai.NewUInt8()
 	// Initializations
 
-	/*{-@pre: ref(wT,A) = 0 -@}*/
 	// assume maps are initialized to 0
 	for !n.Stop {
 		// receive request
-		msgType, pID, inst, pt, px, commands := n.AcceptorReceive()
+		msgType, pID, pInst, pt, px, commands := n.AcceptorReceive()
 
 		switch msgType.Get() {
 
 		// prepare message
 		case PrepareType:
-			dlog.Printf("acc: received proposal %v from %v for instance %v\n", pt.Get(), pID.Get(), inst.Get())
+			dlog.Printf("acc: received proposal %v from %v for instance %v\n", pt.Get(), pID.Get(), pInst.Get())
 			success.Assign(0)
-			if pt.Get() > max.Get(inst.Get()) {
-				max.Put(inst.Get(), pt.Get())
+			if pt.Get() > max.GetKey(pInst) {
+				max.Put(pInst.Get(), pt.Get())
 				success.Assign(1)
-				//logMutex.Lock()
-				//Log[inst.Get()] = &Instance{commands, PREPARED}
-				//logMutex.Unlock()
 			}
 
 		// accept message
 		case AcceptType:
 			dlog.Printf("acc: received accept of %v with ballot %v from %v\n", px.Get(), pt.Get(), pID.Get())
 			success.Assign(0)
-			if pt.Get() >= max.Get(inst.Get()) {
-				wT.Put(inst.Get(), pt.Get())
-				w.Put(inst.Get(), px.Get())
+			if pt.Get() >= max.GetKey(pInst) {
+				wT.Put(pInst.Get(), pt.Get())
+				w.Put(pInst.Get(), px.Get())
 				success.Assign(1)
 				logMutex.Lock()
-				Log[inst.Get()] = &Instance{commands, ACCEPTED}
+				Log[pInst.Get()] = &Instance{commands, ACCEPTED}
 				logMutex.Unlock()
-				dlog.Printf("acc: accepted value %v for ballot %v \n", w.Get(inst.Get()), wT.Get(inst.Get()))
+				dlog.Printf("acc: accepted value %v for ballot %v \n", w.GetKey(pInst), wT.GetKey(pInst))
 			}
 		}
 		// Sending reply
-		dlog.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.Get(inst.Get()), w.Get(inst.Get()), success.Get(), pID.Get())
-		n.SendAcceptorReply(int(pID.Get()), wT.Get(inst.Get()), w.Get(inst.Get()), success.Get())
+		dlog.Printf("acc: sending reply: wt:%v, w:%v, success:%v to %v \n", wT.GetKey(pInst), w.GetKey(pInst), success.Get(), pID.Get())
+		n.SendAcceptorReply(int(pID.Get()), wT.GetKey(pInst), w.GetKey(pInst), success.Get())
 	}
 }
 
 /*{-@ ensures: forall([
-									decl(p1,int),
-									decl(p2,int)
-									],
-                  implies(
-                      and([
-											  elem(a0,as),
-                        elem(p1,ps),
-                        elem(p2,ps),
-                        ref(decided,p1)=1,
-                        ref(decided,p2)=1,
-                        implies(
-														and([
-																	ref(k,p1) > card(as)/2,
-                                  ref(k,p2) > card(as)/2
-															 ]),
-                            and([
-																	ref(t,p1) =< ref(wT,a0),
-																	ref(t,p2) =< ref(wT,a0)
-														    ])
-													),
-                          0 =< ref(l, p1),
-													0 =< ref(l ,p2)
-											  ]),
-                        ref(x,p1) = ref(x,p2))
-									)
-	-@}*/
+	decl(a0,int),
+	decl(p1,int),
+	decl(p2,int)
+       ],
+       implies(
+	       and([
+		    elem(a0,as),
+		    elem(p1,ps),
+		    elem(p2,ps),
+		    ref(decided,p1)=1,
+		    ref(decided,p2)=1,
+		    ref(inst,p1)=ref(inst,p2),
+		    implies(and([
+				 ref(k,p1) > card(as)/2,
+				 ref(k,p2) > card(as)/2
+				]),
+			    and([
+				 ref(t,p1) =< ref(ref(wT,a0),ref(inst,p1)),
+				 ref(t,p2) =< ref(ref(wT,a0), ref(inst,p2))
+				])
+			   ),
+		    0 =< ref(l, p1),
+		    0 =< ref(l ,p2)
+		   ]),
+	       ref(x,p1) = ref(x,p2))
+      ) -@}*/

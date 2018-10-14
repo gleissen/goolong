@@ -204,7 +204,7 @@ func (d *Declarations) Append(d1 *Declarations) {
 func (a *Assign) PrintIceT(lv int) string {
 	ident := indentationAtLv(lv)
 	if a.IsMap {
-		return fmt.Sprintf("%vassign(%v,%v,upd(%v,%v,%v))", ident, a.ProcID, a.Var, a.Var, a.Key, a.Value)
+		return fmt.Sprintf("%vassign(%v,%v,upd(ref(%v,%v),ref(%v,%v),%v))", ident, a.ProcID, a.Var, a.Var, a.ProcID, a.Key, a.ProcID, a.Value)
 	}
 	return fmt.Sprintf("%vassign(%v,%v,%v)", ident, a.ProcID, a.Var, a.Value)
 }

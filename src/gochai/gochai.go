@@ -165,8 +165,8 @@ func (m *Map) Put(key int32, val int32) {
 	m.thisMap[key] = val
 }
 
-func (m *Map) Get(key int32) int32 {
-	return m.thisMap[key]
+func (m *Map) GetKey(key *IntVar) int32 {
+	return m.thisMap[key.Get()]
 }
 
 func (m *Map) getType() string {

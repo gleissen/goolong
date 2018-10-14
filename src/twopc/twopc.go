@@ -71,6 +71,7 @@ func runCoordinatorProtocol(peerAddresses []string) {
 func runServerProtocol(peerAddresses []string) {
 	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
 	n.Start()
+	n.StartSymSet("dbs", "dbs")
 	fmt.Println("Acting as db server.")
 	val := gochai.NewVar()
 	value := gochai.NewVar()
