@@ -89,5 +89,8 @@ else
 	verify_go_file "$BENCHMARK"
 fi
 
+echo
+green "DONE"
+
 # vim: set foldmethod=marker:
 
