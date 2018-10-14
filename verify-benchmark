@@ -1,5 +1,7 @@
 #!/bin/zsh
 
+source ~/.zshrc
+
 function blue()  { print -P "%F{blue}%B$1%b%f" }
 function green() { print -P "%F{green}%B$1%b%f" }
 function red()   { print -P "%F{red}%B$1%b%f" }
