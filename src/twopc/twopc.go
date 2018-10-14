@@ -6,10 +6,10 @@ import (
 	"gochai"
 )
 
-const c = 0 // coordinator ID
+const coordID = 0 // coordinator ID
 
 var isServer = flag.Bool("coord", true, "Act as coordinator (true) or db-node (false). ")
-var myID = flag.Int("id", c, "Replica id")
+var myID = flag.Int("id", coordID, "Replica id")
 var myAddr = flag.String("addr", ":7070", "Server address (this machine). Defaults to localhost.")
 
 func main() {
@@ -23,6 +23,7 @@ func main() {
 }
 
 func runCoordinatorProtocol(peerAddresses []string) {
+	c := coordID
 	n := gochai.CreateNewNode("c", c, *myAddr, peerAddresses, false)
 	fmt.Println("Acting as coordinator.")
 	n.AssignSymSet("dbs", "")
@@ -39,9 +40,19 @@ func runCoordinatorProtocol(peerAddresses []string) {
 	abort.Assign(0)
 	fmt.Println("Please enter your proposal number")
 	proposal.ReadIO()
-	// First phase --
+
+	/*{-@ invariant:
+			forall([decl(i,int)],
+							implies(
+									and([elem(i,rr)]),
+									and([
+										ref(value,i)=0,
+										ref(val,i)=proposal
+										])
+							)
+					)
+	-@}*/
 	for ID := range n.PeerIds {
-		// {-@ invariant: forall([decl(i,int)], implies(and([elem(i,rr)]), and([ref(value,i)=0, ref(val,i)=proposal]))) -@}
 		fmt.Printf("Sending proposal to %v\n", ID)
 		n.Send(ID, proposal)
 		vote = n.RecvFrom(ID)
@@ -58,8 +69,20 @@ func runCoordinatorProtocol(peerAddresses []string) {
 	} else {
 		reply.Assign(0)
 	}
+
+	/*{-@ invariant: forall([decl(i,int)],
+						and([
+								implies(
+									and([elem(i,rr), committed=1]),
+									ref(value,i)=ref(val,i)
+								),
+								implies(
+									and([elem(i,dbs), committed=0]),
+									ref(value,i)=0)
+					 			])
+		 				)
+	-@}*/
 	for ID := range n.PeerIds {
-		// {-@ invariant: forall([decl(i,int)],  and([ implies(and([elem(i,rr), committed=1]), ref(value,i)=ref(val,i)),  implies(and([elem(i,dbs), committed=0]), ref(value,i)=0)])) -@}
 		n.Send(ID, reply)
 		ack = n.RecvFrom(ID)
 	}
@@ -69,7 +92,8 @@ func runCoordinatorProtocol(peerAddresses []string) {
 }
 
 func runServerProtocol(peerAddresses []string) {
-	n := gochai.CreateNewNode("c", *myID, *myAddr, peerAddresses, true)
+	n := gochai.CreateNewNode("db", *myID, *myAddr, peerAddresses, true)
+	c := coordID
 	n.Start()
 	n.StartSymSet("dbs", "dbs")
 	fmt.Println("Acting as db server.")

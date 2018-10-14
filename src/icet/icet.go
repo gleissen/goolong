@@ -63,16 +63,11 @@ type IceTVisitor struct {
 	Parser icetcustom.CustomParser
 }
 
-func (v *IceTVisitor) CurrentProg() icetTerm.IcetTerm {
-	v.currentProgram.AddProc(v.currentProccess)
-	v.IceTTerm = v.currentProgram
-	v.currentProgram.RemoveLastProc()
-	return v.IceTTerm
-}
-
 func (v *IceTVisitor) MakeIceTTerm() string {
-	term := v.CurrentProg().PrintIceT(0)
-	remainder := v.CurrentProg().Remainder().Minimize().PrintIceT(0)
+	v.currentProgram.AddProc(v.currentProccess)
+	term := v.currentProgram.PrintIceT(0)
+	remainder := v.currentProgram.Remainder().Minimize().PrintIceT(0)
+	v.currentProgram.RemoveLastProc()
 	return fmt.Sprintf("prog(tmp,\n %v,\n \tensures(%v),\n %v,\n %v)", v.Declarations.PrintIceT(1), v.Property, term, remainder)
 }
 
@@ -399,7 +394,7 @@ func (v *IceTVisitor) parseComments(node ast.Node, annotTypes []icetTerm.Annotat
 func parseForLoop(loopTerm *ast.RangeStmt, v *IceTVisitor) bool {
 	domain, ok := loopTerm.X.(*ast.SelectorExpr)
 	if ok && domain.Sel.Name == "PeerIds" {
-		invariantSet := v.parseComments(loopTerm.Body, InvariantTypes)
+		invariantSet := v.parseComments(loopTerm, InvariantTypes)
 		invariant := invariantSet.PrintIceT(0)
 		lv := copyVisitor(v)
 		lv.currentPeerID = v.GetValue(loopTerm.Key)
