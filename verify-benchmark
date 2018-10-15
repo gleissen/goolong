@@ -87,7 +87,7 @@ verify_go_file() {
 	popd
 
 	local tt=$((($(date +'%s%N') - $ts)/1000000))
-	echo "Time taken: $tt milliseconds"
+	echo "Total time taken: $tt milliseconds"
 
 	echo
 }
