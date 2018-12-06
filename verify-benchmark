@@ -14,7 +14,7 @@ GOCHAI_SRC_DIR="${GOCHAI_DIR}/src"
 CHECKER="${GOCHAI_DIR}/bin/paxoschk"
 MP_CHECKER="${GOCHAI_DIR}/bin/multipaxoschk"
 
-BRISKIT_DIR="${THIS_DIR}/../Brisk-VCGen"
+BRISKIT_DIR="${THIS_DIR}/Brisk-VCGen"
 
 TMP_DIR="${GOCHAI_DIR}/.tmp"
 mkdir -p "$TMP_DIR"

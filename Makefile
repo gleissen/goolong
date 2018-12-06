@@ -21,3 +21,4 @@ $(BINARIES): bin/%: $$(BINPREQ)
 
 clean:
 	$(GO) clean -i $(patsubst bin/%,%,$(BINARIES))
+	rm -f $(NAMES)
