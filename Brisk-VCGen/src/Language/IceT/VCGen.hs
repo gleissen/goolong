@@ -460,14 +460,6 @@ replaceHere _ ps (Action xs us cond i outs s)
 -------------------------------------------------------------------------------
 -- Monads
 -------------------------------------------------------------------------------
-data VCState a = VCState { tenv  :: M.Map Id Sort
-                         , constrs :: M.Map Id Id
-                         , ictr :: Int
-                         , freshed :: [Binder]
-                         , invs :: [(Int, [Binder], Prop a)]
-                         , cards :: [Card a]
-                         , gather :: Bool
-                         }
 type VCGen a r = State (VCState a) r 
 
 cardsFor :: Id -> VCGen a [Card a]

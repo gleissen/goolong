@@ -164,6 +164,19 @@ firstOf (If _ s1 s2 _)
 firstOf s
   = error ("firstOf: " ++ show s)
 
+firstNonSkips :: VCAnnot a => Stmt (a, Int) -> [Int]
+firstNonSkips (Skip _)               = []
+firstNonSkips (Assign _ _ _ _ (_,i)) = [i]
+firstNonSkips (Atomic s (_,i))       = [i]
+firstNonSkips (ForEach _ _ _ s _)    = firstNonSkips s
+firstNonSkips (If _ s1 s2 _)         = firstNonSkips s1 ++ firstNonSkips s2
+firstNonSkips (Seq stmts _)          = helper stmts
+  where
+    helper [] = []
+    helper (s:ss) = case firstNonSkips s of
+                      [] -> helper ss
+                      res -> res
+
 data CFG a = CFG { path  :: [Prop a]
                  , binds :: [Binder]
                  , m     :: M.Map Int [(Prop a, Int)]
@@ -228,7 +241,7 @@ assgn x y = Atomic (Assign "" (Bind x Int) "" (Var y) ()) ()
 
 actions :: VCAnnot a => Id -> Stmt a -> [Binder] -> ([Int], [Action a], [Int])
 actions w s bs
-  = (firstOf si, [ Action bs un ps i (getOuts i) s | Action bs un ps i _ s <- as0 ], outs)
+  = (firstNonSkips si, [ Action bs un ps i (getOuts i) s | Action bs un ps i _ s <- as0 ], outs)
   where
      cfg        = m st
      st0        = CFG [] (Bind w Int : bs) M.empty M.empty
@@ -344,3 +357,13 @@ instance Subst Prop where
           go (Let xs p)
             | x `elem` (bvar . fst <$> xs) = Let xs p
             | otherwise                    = Let xs (go p)
+
+data VCState a = VCState { tenv  :: M.Map Id Sort
+                         , constrs :: M.Map Id Id
+                         , ictr :: Int
+                         , freshed :: [Binder]
+                         , invs :: [(Int, [Binder], Prop a)]
+                         , cards :: [Card a]
+                         , gather :: Bool
+                         }
+

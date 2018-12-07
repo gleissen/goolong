@@ -2,6 +2,7 @@
 .query.icet
 .query.smt2
 
+.stack-work
 
 log[0-9]*
 logc
@@ -63,7 +64,6 @@ _testmain.go
 bin/
 pkg/
 
-.*
 tmp*
 
 # This file includes artifacts of Go build that should not be checked in.
