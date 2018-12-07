@@ -23,6 +23,7 @@ typeset -A GO_FILES
 GO_FILES=( \
 	"multi-paxos"      "${GOCHAI_SRC_DIR}/multipaxos/multipaxos.go" \
 	"paxos"            "${GOCHAI_SRC_DIR}/paxos/paxos.go" \
+	"simple-paxos"     "${GOCHAI_SRC_DIR}/simplepaxos/simplepaxos.go" \
 	"raft"             "${GOCHAI_SRC_DIR}/raftcore/raftcore.go" \
 	"two-phase-commit" "${GOCHAI_SRC_DIR}/twopc/twopc.go" \
 	)

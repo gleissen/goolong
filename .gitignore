@@ -12,6 +12,7 @@ logc
 /twopc
 /paxoschk
 /multipaxoschk
+/simplepaxos
 
 
 .DS_Store

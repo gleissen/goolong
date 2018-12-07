@@ -18,6 +18,7 @@ ts=$(date +'%s%N')
 ./brisk-sequentialize/brisk "$FILE" > "$SEQ_FILE"
 tt=$((($(date +'%s%N') - $ts)/1000000))
 echo "Rewrite: $tt milliseconds"
+echo "Write synchronized file to $SEQ_FILE"
 
 ts=$(date +'%s%N')
 stack exec briskly -- "$SEQ_FILE"

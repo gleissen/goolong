@@ -4,7 +4,7 @@ GO_BUILD   = $(GO) build
 GO_INSTALL = $(GO) install
 BIN_DIR    = $(THIS_DIR)/bin
 
-NAMES    = twopc paxos multipaxos client paxoschk multipaxoschk
+NAMES    = twopc paxos multipaxos client paxoschk multipaxoschk simplepaxos
 BINARIES = $(patsubst %,bin/%,$(NAMES))
 
 .PHONY: clean

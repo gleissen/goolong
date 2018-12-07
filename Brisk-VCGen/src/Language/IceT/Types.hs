@@ -148,21 +148,51 @@ label s = evalState (mapM go s) 0
               put (i + 1)
               return (s, i)
 
+-- firstOf :: VCAnnot a => Stmt (a, Int) -> [Int]
+-- firstOf (Skip _)
+--   = []
+-- firstOf (Assign _ _ _ _ (_,i))
+--   = [i]
+-- firstOf (Atomic s (_,i))
+--   = [i]
+-- firstOf (Seq (s:ss) _)
+--   = firstOf s
+-- firstOf (ForEach _ _ _ s _)
+--   = firstOf s
+-- firstOf (If _ s1 s2 _)
+--   = firstOf s1 ++ firstOf s2
+-- firstOf s
+--   = error ("firstOf: " ++ show s)
+
 firstOf :: VCAnnot a => Stmt (a, Int) -> [Int]
-firstOf (Skip _)
-  = []
-firstOf (Assign _ _ _ _ (_,i))
-  = [i]
-firstOf (Atomic s (_,i))
-  = [i]
-firstOf (Seq (s:ss) _)
-  = firstOf s
-firstOf (ForEach _ _ _ s _)
-  = firstOf s
-firstOf (If _ s1 s2 _)
-  = firstOf s1 ++ firstOf s2
-firstOf s
-  = error ("firstOf: " ++ show s)
+firstOf (Skip _)               = []
+firstOf (Assign _ _ _ _ (_,i)) = [i]
+firstOf (Atomic s (_,i))       = firstOf s
+firstOf (Assert _ _ _)         = []
+firstOf (ForEach _ _ _ s _)    = firstOf s
+firstOf (If _ s1 s2 _)         = firstOf s1 ++ firstOf s2
+firstOf (Seq stmts _)          = helper stmts
+  where
+    helper [] = []
+    helper (s:ss) = case firstOf s of
+                      [] -> helper ss
+                      res -> res
+firstOf s = error ("firstOf: " ++ show s)
+
+-- firstNonSkipOf :: VCAnnot a => Stmt (a, Int) -> [Int]
+-- firstNonSkipOf (Skip _)               = []
+-- firstNonSkipOf (Assign _ _ _ _ (_,i)) = [i]
+-- firstNonSkipOf (Atomic s (_,i))       = [i]
+-- firstNonSkipOf (ForEach _ _ _ s _)    = firstNonSkipOf s
+-- firstNonSkipOf (If _ s1 s2 _)         = firstNonSkipOf s1 ++ firstNonSkipOf s2
+-- firstNonSkipOf (Seq stmts _)          = helper stmts
+--   where
+--     helper [] = []
+--     helper (s:ss) = case firstNonSkipOf s of
+--                       [] -> helper ss
+--                       res -> res
+-- firstNonSkipOf s = error ("firstNonSkipOf: " ++ show s)
+
 
 data CFG a = CFG { path  :: [Prop a]
                  , binds :: [Binder]
@@ -233,7 +263,8 @@ actions w s bs
      cfg        = m st
      st0        = CFG [] (Bind w Int : bs) M.empty M.empty
      as0        = fmap (fmap fst) as
-     si         = label s
+     si'        = label s
+     si = trace (show si') si'
      ((outs,as), st) = runState (toActions w si) st0  
      getOuts i       = [ (fst <$> p, i) | (p, i) <- M.findWithDefault [] i cfg ]
 
