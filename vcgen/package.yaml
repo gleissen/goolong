@@ -1,0 +1,65 @@
+name:                vcgen
+version:             0.1.0.0
+github:              "githubuser/vcgen"
+license:             BSD3
+author:              "Author name here"
+maintainer:          "example@example.com"
+copyright:           "2018 Author name here"
+
+extra-source-files:
+- README.md
+- ChangeLog.md
+
+description: Please see the README on GitHub at <https://github.com/githubuser/vcgen#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- mtl
+- pretty
+- parsec
+- process
+- containers
+
+library:
+  source-dirs: src
+  ghc-options:
+  - -O2
+  - -fwarn-tabs 
+  - -fwarn-unused-imports 
+  - -fwarn-name-shadowing 
+  - -fwarn-incomplete-uni-patterns 
+  - -fwarn-incomplete-patterns 
+  - -fwarn-overlapping-patterns 
+  - -fwarn-incomplete-record-updates 
+  - -fdefer-type-errors 
+  - -fwarn-missing-signatures 
+  - -fwarn-monomorphism-restriction 
+  - -fwarn-orphans 
+  - -fforce-recomp
+  - -Werror
+
+executables:
+  vcgen:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    - -O2
+    - -fwarn-tabs 
+    - -fwarn-unused-imports 
+    - -fwarn-name-shadowing 
+    - -fwarn-incomplete-uni-patterns 
+    - -fwarn-incomplete-patterns 
+    - -fwarn-overlapping-patterns 
+    - -fwarn-incomplete-record-updates 
+    - -fdefer-type-errors 
+    - -fwarn-missing-signatures 
+    - -fwarn-monomorphism-restriction 
+    - -fwarn-orphans 
+    - -fforce-recomp
+    - -Werror
+    dependencies:
+    - vcgen
+
