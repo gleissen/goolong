@@ -8,7 +8,7 @@ build_brisk() {
 
 build_briskly() {
 	pushd $THIS_DIR/Brisk-VCGen
-	stack install
+	stack build
 	popd
 }
 

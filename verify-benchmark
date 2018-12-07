@@ -77,14 +77,27 @@ verify_go_file() {
 
 	if [[ "$name" == "multi-paxos" ]]; then
 		$MP_CHECKER "$go_file" > "$icet_file"
+		last_error=$?
 	else
 		$CHECKER "$go_file" > "$icet_file"
+		last_error=$?
 	fi
 	echo "saved .icet file to $icet_file"
 
+	if [[ $last_error -ne 0 ]]; then
+		echo "VERIFICATION FAILED"
+		exit 1
+	fi
+
 	pushd $BRISKIT_DIR
 	./briskit "$icet_file"
+	last_error=$?
 	popd
+
+	if [[ $last_error -ne 0 ]]; then
+		echo "VERIFICATION FAILED"
+		exit 1
+	fi
 
 	local tt=$((($(date +'%s%N') - $ts)/1000000))
 	echo "Total time taken: $tt milliseconds"
