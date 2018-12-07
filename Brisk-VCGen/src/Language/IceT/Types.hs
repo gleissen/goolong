@@ -176,6 +176,7 @@ firstNonSkips (Seq stmts _)          = helper stmts
     helper (s:ss) = case firstNonSkips s of
                       [] -> helper ss
                       res -> res
+firstNonSkips s = error ("firstNonSkips: " ++ show s)
 
 data CFG a = CFG { path  :: [Prop a]
                  , binds :: [Binder]
@@ -331,6 +332,7 @@ instance Subst Expr where
     = NonDetValue
   subst x e (PExpr a)
     = PExpr $ subst x e a
+  subst x e1 e2 = error $ printf "subst called with %s, e1: %s, e2: %s" x (show e1) (show e2)
 
 instance Subst Prop where
   subst x e                 = go
@@ -357,6 +359,7 @@ instance Subst Prop where
           go (Let xs p)
             | x `elem` (bvar . fst <$> xs) = Let xs p
             | otherwise                    = Let xs (go p)
+          go p = error $ printf "subst called with %s, expr: %s, prop: %s" x (show e) (show p)
 
 data VCState a = VCState { tenv  :: M.Map Id Sort
                          , constrs :: M.Map Id Id

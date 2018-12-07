@@ -162,6 +162,7 @@ simplifySkips (Seq ss l) = Seq ss' l
   where ss'    = filter (not . isSkip) ss
         isSkip (Skip _) = True
         isSkip _        = False
+simplifySkips s = s
 
 isLocal (Assign p _ q _ _) = p == q
 isLocal (Skip _)           = True

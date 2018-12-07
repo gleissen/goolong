@@ -5,7 +5,7 @@ import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
-
+import Text.Printf
 
 {-
 Core languange:
@@ -201,6 +201,7 @@ matchAssign p q [i] [e]
 matchAssign p q is es
   | length is == length es
   = return $ Seq ([Assign p (Bind i Int) q e p | i <- is | e <- es]) p
+matchAssign p q x y = error $ printf "matchAssign not implemented for %s, %s, %s, %s" p q (show x) (show y)
 assignLHS = pairNested ident 
 assignRHS = pairNested expr
 

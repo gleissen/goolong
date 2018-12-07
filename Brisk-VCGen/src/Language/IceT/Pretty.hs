@@ -4,6 +4,7 @@ module Language.IceT.Pretty (render, pp) where
 import Language.IceT.Types
 import Text.PrettyPrint.HughesPJ
 import qualified Data.Map.Strict as M
+import Text.Printf
 
 class Pretty a where
   pp :: a -> Doc
@@ -21,6 +22,10 @@ instance Pretty (Stmt a) where
                       text "else" $+$ (nest 2 (pp s2))
   pp (ForEach x xs _ s _) = text "for" <+> pp x <+> colon <+> pp xs $+$ nest 2 (pp s)
   pp (While x s _) = text "while" <+> text x $+$ nest 2 (pp s)
+  pp (Cases e cases _) = error $ printf "no pp for (Cases %s %s)" (show $ pp e) (show $ pp cases)
+
+instance Pretty (Case a) where
+  pp (Case{..}) = text $ printf "(Case %s %s)" (show $ pp caseGuard) (show $ pp caseStmt)
 
 instance Pretty (Prop a) where
   pp TT = text "true"
@@ -75,6 +80,7 @@ instance Pretty Binder where
 instance Pretty Sort where
   pp Int = text "int"
   pp Set = text "set"
+  pp Bool = text "bool"
   pp (Map i t) = pp i <+> text "->" <+> pp t
 instance Pretty Index where
   pp (SetIdx i) = text i

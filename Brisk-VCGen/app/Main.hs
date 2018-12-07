@@ -2,7 +2,6 @@ module Main where
 
 import System.Environment
 import System.Exit
-import Control.Monad
 import Language.IceT.VCGen
 
 main :: IO ()
