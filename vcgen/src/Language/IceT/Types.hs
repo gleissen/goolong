@@ -54,11 +54,11 @@ data Stmt a = Skip    { stmtData :: a }
                       , parStmt        :: Stmt a
                       , stmtData       :: a
                       }
-            | Assign  { stmtProcess        :: Id
-                      , assignBinder       :: Binder
-                      , assignOtherProcess :: Id
-                      , assignExpr         :: Expr a
-                      , stmtData           :: a
+            | Assign  { stmtProcess       :: Id
+                      , assignBinder      :: Binder
+                      , assignFromProcess :: Id
+                      , assignExpr        :: Expr a
+                      , stmtData          :: a
                       }
             | Seq     { seqStmts :: [Stmt a]
                       , stmtData :: a
@@ -82,11 +82,11 @@ data Stmt a = Skip    { stmtData :: a }
                       , caseList :: [Case a]
                       , stmtData :: a
                       }
-            | ForEach { forElement :: Binder
-                      , forList    :: Binder
-                      , forData    :: (Id, Prop a)
-                      , forStmt    :: Stmt a
-                      , stmtData   :: a
+            | ForEach { forElement   :: Binder
+                      , forList      :: Binder
+                      , forInvariant :: (Id, Prop a) -- invariant holds for every p in done set
+                      , forStmt      :: Stmt a
+                      , stmtData     :: a
                       }
             | While   { stmtProcess :: Id
                       , whileStmt   :: Stmt a
@@ -304,6 +304,70 @@ actions w stmt bs = ( firstOf labeledStmt
     st0  = CFG [] (bind : bs) M.empty M.empty
     as0  = fmap (fmap fst) as
 
+-------------------------------------------------------------------------------
+-- Substitution
+-------------------------------------------------------------------------------
+
+class Subst b where
+  subst :: Id -> (Expr a) -> b a -> b a
+
+instance Subst Stmt where
+  subst v e (Assign {..})  = Assign { assignExpr = subst v e assignExpr, .. }
+  subst v e (Seq {..})     = Seq { seqStmts = subst v e <$> seqStmts, .. }
+  subst v e (ForEach {..})
+    | v /= bvar forElement = ForEach { forInvariant = subst v e <$> forInvariant
+                                     , forStmt = subst v e forStmt
+                                     , ..
+                                     }
+    | otherwise            = ForEach {..}
+  subst v e (Atomic {..})  = Atomic { atomicStmt = subst v e atomicStmt, .. }
+  subst v e (If {..})      = If { ifCondition = subst v e ifCondition
+                                , thenStmt = subst v e thenStmt
+                                , elseStmt = subst v e elseStmt
+                                , ..
+                                }
+  subst v e (Assert {..})  = Assert { stmtProperty = subst v e stmtProperty, .. }
+  subst v e (Assume {..})  = Assume { stmtProperty = subst v e stmtProperty, .. }
+  subst v e (Par {..})     = Par { parStmt = subst v e parStmt, .. }
+  subst _ _ (Skip {..})    = Skip {..}
+  subst _ _ _              = error "subst stmt"
+
+instance Subst Expr where
+  subst _ _ (Const i)        = Const i
+  subst v e var@(Var x)
+    | v == x                 = e
+    | otherwise              = var
+  subst v e (Bin o e1 e2)    = Bin o (subst v e e1) (subst v e e2)
+  subst v e (Select e1 e2)   = Select (subst v e e1) (subst v e e2)
+  subst v e (Store e1 e2 e3) = Store (subst v e e1) (subst v e e2) (subst v e e3)
+  subst _ _ EmptySet         = EmptySet
+  subst v e (Size a)         = Size (subst v e a)
+  subst _ _ NonDetValue      = NonDetValue
+  subst v e (PExpr a)        = PExpr $ subst v e a
+  subst v e (Ite prop e1 e2) = Ite (subst v e prop) (subst v e e1) (subst v e e2)
+
+instance Subst Prop where
+  subst v e = go
+    where go (Atom r e1 e2)          = Atom r (subst v e e1) (subst v e e2)
+          go (Not p)                 = Not (subst v e p)
+          go (And ps)                = And (go <$> ps)
+          go (Or ps)                 = Or (go <$> ps)
+          go (p :=>: q)              = go p :=>: go q
+          go (Forall xs p)
+            | v `elem` (bvar <$> xs) = Forall xs p
+            | otherwise              = Forall xs (go p)
+          go (Exists xs p)
+            | v `elem` (bvar <$> xs) = Exists xs p
+            | otherwise              = Exists xs (go p)
+          go TT                      = TT
+          go FF                      = FF
+          go (Prop e')               = Prop (subst v e e')
+          go (Here e')               = Here $ subst v e e'
+          go (NonDetProp)            = NonDetProp
+          go (Let xs p)
+            | v `elem` (bvar . fst <$> xs) = Let xs p
+            | otherwise                    = Let xs (go p)
+          go p@(PVar _)              = p
 
 -------------------------------------------------------------------------------
 -- Helper Functions
