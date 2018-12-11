@@ -19,6 +19,7 @@ dependencies:
 - parsec
 - process
 - containers
+- liquid-fixpoint
 
 library:
   source-dirs: src

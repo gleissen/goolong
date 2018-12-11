@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
@@ -31,39 +32,73 @@ instance Process Id where
 
 type Id = String
 
-data Program a = Prog { decls     :: [Binder]
-                      , cardDecls :: [Card a]
-                      , prog      :: Stmt a
-                      , ensures   :: Prop a
-                      }  
-  deriving (Show)
+data Program a = Program { decls     :: [Binder]
+                         , cardDecls :: [Card a]
+                         , prog      :: Stmt a
+                         , ensures   :: Prop a
+                         }
+               deriving (Show)
 
-data Card a = Card { cardName :: Id
+data Card a = Card { cardName  :: Id
                    , cardOwner :: Id
-                   , cardId :: Id
-                   , cardElem :: Id
-                   , cardProp :: Prop a
+                   , cardId    :: Id
+                   , cardElem  :: Id
+                   , cardProp  :: Prop a
                    }
-  deriving (Show)
+            deriving (Show)
 
-data Stmt a = Skip a
-            | Par Id Id (Prop a) (Stmt a) a
-            | Assign Id Binder Id (Expr a) a
-            | Seq [Stmt a] a
-            | Atomic (Stmt a) a
-            | Assume (Prop a) a
-            | Assert (Prop a) Bool a
-            | If (Prop a) (Stmt a) (Stmt a) a
-            | Cases (Expr a) [Case a] a
-            | ForEach Binder Binder (Id, Prop a) (Stmt a) a
-            | While Id (Stmt a) a
+data Stmt a = Skip    { stmtData :: a }
+            | Par     { stmtProcess    :: Id
+                      , stmtProcessSet :: Id
+                      , stmtProperty   :: Prop a
+                      , parStmt        :: Stmt a
+                      , stmtData       :: a
+                      }
+            | Assign  { stmtProcess        :: Id
+                      , assignBinder       :: Binder
+                      , assignOtherProcess :: Id
+                      , assignExpr         :: Expr a
+                      , stmtData           :: a
+                      }
+            | Seq     { seqStmts :: [Stmt a]
+                      , stmtData :: a
+                      }
+            | Atomic  { atomicStmt :: Stmt a
+                      , stmtData   :: a
+                      }
+            | Assume  { stmtProperty :: Prop a
+                      , stmtData     :: a
+                      }
+            | Assert  { stmtProperty :: Prop a
+                      , assertBool   :: Bool
+                      , stmtData     :: a
+                      }
+            | If      { ifCondition :: Prop a
+                      , thenStmt    :: Stmt a
+                      , elseStmt    :: Stmt a
+                      , stmtData    :: a
+                      }
+            | Cases   { caseExpr :: Expr a
+                      , caseList :: [Case a]
+                      , stmtData :: a
+                      }
+            | ForEach { forElement :: Binder
+                      , forList    :: Binder
+                      , forData    :: (Id, Prop a)
+                      , forStmt    :: Stmt a
+                      , stmtData   :: a
+                      }
+            | While   { stmtProcess :: Id
+                      , whileStmt   :: Stmt a
+                      , stmtData    :: a
+                      }
             deriving (Eq, Show, Functor, Foldable, Traversable)
 
 data Case a = Case { caseGuard :: Expr a
                    , caseStmt  :: Stmt a
                    , caseAnnot :: a
                    }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+            deriving (Eq, Show, Functor, Foldable, Traversable)
             
 data Expr a = Const Int
             | EmptySet
@@ -75,15 +110,15 @@ data Expr a = Const Int
             | Size (Expr a)
             | Ite (Prop a) (Expr a) (Expr a)
             | Bin Op (Expr a) (Expr a)
-  deriving (Eq, Show, Functor, Foldable, Traversable)
+            deriving (Eq, Show, Functor, Foldable, Traversable)
 
-data Op     = Plus
-            | Minus
-            | Mul
-            | Div
-            | SetSubSingle -- Xs - {x}
-            | SetAdd
-  deriving (Eq, Show)
+data Op = Plus
+        | Minus
+        | Mul
+        | Div
+        | SetSubSingle -- Xs - {x}
+        | SetAdd
+        deriving (Eq, Show)
 
 data Prop a = TT
             | FF
@@ -101,56 +136,178 @@ data Prop a = TT
             | Let [(Binder, Expr a)] (Prop a)
             deriving (Eq, Show, Functor, Foldable, Traversable)
 
-data Binder = Bind { bvar :: Id, bsort :: Sort }
-  deriving (Eq, Show)
+data Binder = Bind { bvar :: Id
+                   , bsort :: Sort
+                   }
+            deriving (Eq, Show)
 
 data Sort = Int | Set | Map Index Sort | Bool
-  deriving (Eq, Show)
+          deriving (Eq, Show)
 
 data Index = SetIdx Id
            | IntIdx
-  deriving (Eq, Show)
+           deriving (Eq, Show)
 
 data Rel = Eq | Le | Lt | Gt | SetMem
-  deriving (Eq, Show)
-
-pc :: Id -> Id -> Expr a
-pc ps p = Select (Var (pcName ps)) (Var p)
-
-pcName :: Id -> Id
-pcName ps = "pc!" ++ ps
-
-writes :: Stmt a -> [Binder]
-writes = nub . go
-  where
-    go (Skip _)           = []
-    go (If _ s1 s2 _)     = go s1 ++ go s2
-    go (Atomic s _)       = go s
-    go (Assign _ x _ _ _) = [x]
-    go (Seq stmts _)      = stmts >>= go
-    go (ForEach x _ _ s _)= x : go s
-    go (While _ s _)      = go s
-    go (Cases _ cs _)     = cs >>= go . caseStmt
-    go (Par _ _ _ s _)    = go s
-    go (Assert _ _ _)     = []
-    go (Assume _ _ )      = []
+         deriving (Eq, Show)
 
 -------------------------------------------------------------------------------
 -- Actions
 -------------------------------------------------------------------------------
 
-data Action a = Action { actionScope     :: [Binder]
-                       , actionProcesses :: [(Id, Id)]
-                       , actionPath      :: [Prop a]
-                       , actionLocation  :: Int
-                       , actionExits     :: [(Prop a, Int)]
-                       , actionStmt      :: (Stmt a)
+-- | Atomic action
+data Action a = Action { actionScope     :: [Binder]        -- Binders in this scope
+                       , actionProcesses :: [(Id, Id)]      -- (p,ps) \in actionProcesses ==> p \in ps
+                       , actionPath      :: [Prop a]        -- Path conditions
+                       , actionLocation  :: Int             -- The location (i.e. label) of the action
+                       , actionExits     :: [(Prop a, Int)] -- Locations of the successors of this atomic action,
+                                                            -- and the respective path conditions
+                       , actionStmt      :: (Stmt a)        -- Statement that is executed atomically
                        }
               deriving (Show, Eq, Functor)
 
-ins               :: Int -> Prop a -> Maybe [(Prop a, Int)] -> Maybe [(Prop a, Int)]
-ins v g Nothing   = Just [(g,v)]
-ins v g (Just vs) = Just ((g,v):vs)
+-- | Local state used while constructing the atomic actions needed by the vcgen
+data CFG a = CFG { cfgPath      :: [Prop a]    -- the path conditions
+                 , cfgBinds     :: [Binder]    -- set of binders
+                 , cfgMap       :: CFGMap a    -- (l, [(p1, m1), ...]) in cfgMap IF m1 is an immediate successor of l,
+                                               -- with path condition p1
+                 , cfgProcesses :: M.Map Id Id -- Contains (p, ps) if p \in ps. Used for unfolding. 
+                 }  
+
+-- Helper type aliases
+type CFGMap a = M.Map Int [(Prop a, Int)]
+type CfgM s a = State (CFG s) a
+type ToActionsReturn a = CfgM (a, Int) ([Int], [Action (a, Int)])
+
+----------------------------------------------------------------------------------------- 
+{- |
+toAction :: VCAnnot a
+         => Stmt (a, Int)     : Statement (with unique identifier Int) to generate
+         -> ToActionsReturn a : A stateful monad that returns a pair. First element successor locations,
+                                the second is a list of atomic actions.
+-}
+toActions :: VCAnnot a => Stmt (a, Int) -> ToActionsReturn a
+----------------------------------------------------------------------------------------- 
+toActions s@(Atomic {..}) = toActionsHelper atomicStmt (getStmtLoc s)
+
+toActions s@(Assign {..}) = toActionsHelper s (getStmtLoc s) 
+
+toActions s@(Skip {..}) = toActionsHelper s (getStmtLoc s)
+
+toActions (ForEach {..}) = pushForLoop $ do
+  (outs, as) <- toActions forStmt
+  modify $ \st -> st { cfgMap = updCfgMap (cfgMap st) forStmt outs }
+  return (outs, as)
+  where
+    -- | run the given action, after updating the path and bindings
+    pushForLoop :: CfgM s a -> CfgM s a 
+    pushForLoop act = withUnfold (bvar forElement) (bvar forList) $ do
+      vs0 <- gets cfgBinds
+      p0  <- gets cfgPath
+      let grd = Atom SetMem (Var $ bvar forElement) (Var $ bvar forList) 
+
+      modify $ \s -> s { cfgBinds = forElement : vs0
+                       , cfgPath  = grd : p0
+                       }
+      result <- act
+      modify $ \s -> s { cfgBinds = vs0
+                       , cfgPath  = p0
+                       }
+      return result
+
+    -- | run the given action, after updating the 
+    withUnfold :: Id -> Id -> CfgM s a -> CfgM s a
+    withUnfold p ps act = do
+      us0 <- gets cfgProcesses
+      modify $ \s -> s { cfgProcesses = M.insert p ps (cfgProcesses s)  }
+      result <- act
+      modify $ \s -> s { cfgProcesses = us0}
+      return result
+  
+toActions (Seq {..}) = do
+  (lastOut, as) <- foldM go ([], []) seqStmts
+  return (lastOut, concat as)
+  where
+    go (prevOut, s0) s = do (out, s') <- toActions s
+                            modify $ \st -> st { cfgMap = updCfgMap (cfgMap st) s prevOut }
+                            return (out, s':s0)
+
+toActions (If {..}) = do
+  p0 <- gets cfgPath
+  -- handle the then branch
+  modify $ \s -> s { cfgPath = ifCondition : p0 }
+  (last1, a1)  <- toActions thenStmt
+  -- handle the else branch
+  modify $ \s -> s { cfgPath = Not ifCondition : p0 }
+  (last2, a2) <- toActions elseStmt
+  -- reset the path variable, and return the result
+  modify $ \s -> s { cfgPath = p0 }
+  return (last1 ++ last2, a1 ++ a2)
+
+toActions stmt = error $ printf "called toActions with %s %s" (show stmt)
+
+{- |
+Given a statement that is executed atomically and the location of the statement,
+returns a pair that contains the location and the atomic action
+-}
+toActionsHelper :: Stmt (a, Int) -> Int -> ToActionsReturn a
+toActionsHelper stmt loc = do
+  p  <- gets cfgPath                   -- get the current path variable
+  bs <- gets cfgBinds                  -- get the current set of binders
+  us <- M.toList <$> gets cfgProcesses -- get the list of unfolded processes
+  let action = Action { actionScope     = bs
+                      , actionProcesses = us
+                      , actionPath      = p
+                      , actionLocation  = loc
+                      , actionExits     = [] -- This will be updated later ...
+                      , actionStmt      = stmt
+                      }
+  return ([loc], [action])
+
+{- |
+Given an immediate successor map, a statement and a list of successors, update
+the map with entries (o, (True, i)) where
+* o is a successor location
+* i is a predecessor location
+-}
+updCfgMap :: CFGMap (a, Int) -> Stmt (a, Int) -> [Int] -> CFGMap (a, Int)
+updCfgMap m stmt outs = foldl' (\m' o ->
+                                  foldl' (\m'' i ->
+                                            M.alter (ins TT i) o m''
+                                         ) m' (firstOf stmt)
+                               ) m outs
+  where
+    ins prop v Nothing   = Just [(prop,v)]
+    ins prop v (Just vs) = Just ((prop,v):vs)
+  
+----------------------------------------------------------------------------------------- 
+{- |
+actions :: VCAnnot a
+        => Id
+        -> Stmt a
+        -> [Binder]
+        -> ([Int], [Action a], [Int])
+-}
+actions :: VCAnnot a => Id -> Stmt a -> [Binder] -> ([Int], [Action a], [Int])
+----------------------------------------------------------------------------------------- 
+actions w stmt bs = ( firstOf labeledStmt
+                    , [ a { actionExits = getOuts (actionLocation a) } | a <- as0 ]
+                    , outs
+                    )
+  where
+    labeledStmt      = label stmt
+    ((outs, as), st) = runState (toActions labeledStmt) st0  
+    getOuts loc      = [ (fst <$> p, i') | (p, i') <- M.findWithDefault [] loc cfg ]
+
+    cfg  = cfgMap st
+    bind = Bind { bvar = w , bsort = Int }
+    st0  = CFG [] (bind : bs) M.empty M.empty
+    as0  = fmap (fmap fst) as
+
+
+-------------------------------------------------------------------------------
+-- Helper Functions
+-------------------------------------------------------------------------------
 
 -- | Gives an unique identifier to every statement
 label      :: Stmt a -> Stmt (a, Int)
@@ -161,184 +318,31 @@ label stmt = evalState (mapM go stmt) 0
               put (i + 1)
               return (s, i)
 
-data CFG a = CFG { cfgPath  :: [Prop a]
-                 , cfgBinds :: [Binder]
-                 , cfgM     :: M.Map Int [(Prop a, Int)]
-                 , cfgUs    :: M.Map Id Id
-                 }  
-type CfgM s a = State (CFG s) a
+getStmtLoc :: Stmt (a, Int) -> Int
+getStmtLoc = snd . stmtData
 
-updCfg m s outs
-  = foldl' (\m o ->
-              foldl' (\m i ->
-                        M.alter (ins i TT) o m) m (firstOf s)) m outs
-  
-toActions :: VCAnnot a => Id -> Stmt (a, Int) -> CfgM (a, Int) ([Int], [Action (a, Int)])
-toActions w (Atomic s (_, i))
-  = do p  <- gets path
-       bs <- gets binds
-       us <- M.toList <$> gets us
-       return ([i], [Action bs us p i [] s])
-toActions w s@(Assign _ _ _ _ l)
-  = toActions w (Atomic s l)
-toActions w (Skip _)
-  = return ([], [])
-toActions w (ForEach x xs (r, i) s (l,_))
-  = pushForLoop w (process l) x xs $ do
-       (outs, as) <- toActions w s
-       modify $ \st -> st { m = updCfg (m st) s outs }
-       return (outs, as)
-toActions w (Seq ss _) = do (last, as) <- foldM go ([], []) ss
-                            return (last, concat as)
+firstOf :: Stmt (a, Int) -> [Int]
+firstOf (If _ s1 s2 _) = firstOf s1 ++ firstOf s2
+firstOf stmt           = [ getStmtLoc stmt ]
+
+pc :: Id -> Id -> Expr a
+pc ps p = Select (Var (pcName ps)) (Var p)
+
+pcName :: Id -> Id
+pcName ps = "pc!" ++ ps
+
+writes :: Stmt a -> [Binder]
+writes = nub . go
   where
-    go (prev, s0) s = do (out, s') <- toActions w s
-                         modify $ \st -> st { m = updCfg (m st) s prev }
-                         return (out, s':s0)
-toActions w (If p s1 s2 l)
-  = do p0          <- gets path
-       modify $ \s -> s { path = p : p0 }
-       (last, a1)  <- toActions w s1
-       modify $ \s -> s { path = Not p : p0 }
-       (last', a2) <- toActions w s2
-       modify $ \s -> s { path = p0 }
-       return (last ++ last', a1 ++ a2)
-toActions w s = error ("buildCFG\n" ++ show s)
-
-pushForLoop :: Id -> Id -> Binder -> Binder -> CfgM s a -> CfgM s a
-pushForLoop p q x xs act
-  = withUnfold (bvar x) (bvar xs) $ do
-       vs0 <- gets binds
-       p0  <- gets path
-       modify $ \s -> s { binds = x : vs0
-                        , path  = grd : p0
-                        }
-       r  <- act
-       modify $ \s -> s { binds = vs0, path = p0 }
-       return r 
-  where
-    grd | p == q    = Atom SetMem (Var (bvar x)) (Var $ bvar xs) 
-        | otherwise = Atom SetMem (Var $ bvar x) (Var $ bvar xs)
-    sel x p = Select (Var (bvar x)) (Var p)
-
-assgn :: Id -> Id -> Stmt ()
-assgn x y = Atomic (Assign "" (Bind x Int) "" (Var y) ()) ()
-
-actions :: VCAnnot a => Id -> Stmt a -> [Binder] -> ([Int], [Action a], [Int])
-actions w s bs
-  = (firstOf si, [ Action bs un ps i (getOuts i) s | Action bs un ps i _ s <- as0 ], outs)
-  where
-     cfg        = m st
-     st0        = CFG [] (Bind w Int : bs) M.empty M.empty
-     as0        = fmap (fmap fst) as
-     si'        = label s
-     si = trace (show si') si'
-     ((outs,as), st) = runState (toActions w si) st0  
-     getOuts i       = [ (fst <$> p, i) | (p, i) <- M.findWithDefault [] i cfg ]
-
-exitNodes :: M.Map Int [(Prop (a, Int), Int)] -> [Int]
-exitNodes m = [ i | i <- outs, i `notElem` ins ]
-  where
-    ins  = M.keys m
-    outs = nub $ M.foldr' (\outs0 outs -> outs ++ (snd <$> outs0)) [] m
-
-withUnfold :: Id -> Id -> CfgM s a -> CfgM s a
-withUnfold p ps act
-  = do us0 <- gets us
-       modify $ \s -> s { us = M.insert p ps (us s)  }
-       r <- act
-       modify $ \s -> s { us = us0}
-       return r
-  
-cfg p s = m . snd $ runState (toActions p s) (CFG [] [] M.empty M.empty)
--------------------------------------------------------------------------------
--- Formulas
--------------------------------------------------------------------------------
-and :: [Prop a] -> Prop a
-and ps  = case compact TT ps of
-            []  -> TT
-            [p] -> p
-            ps'  -> And ps'
-or ps = case compact FF ps of
-          [] -> FF
-          [p] -> p
-          ps' -> Or ps'
-compact one ps = L.filter (/= one) (simplify <$> ps)
-simplify (p :=>: TT) = TT
-simplify (TT :=>: p) = p
-simplify (And ps)    = and ps
-simplify (Or ps)     = or  ps
-simplify p           = p
-
-class Subst b where
-  subst :: Id -> (Expr a) -> b a -> b a
-
-instance Subst Stmt where
-  subst x a (Assign p y q e l)
-    = Assign p y q (subst x a e) l
-  subst x a (Seq stmts l)
-    = Seq (subst x a <$> stmts) l
-  subst x a for@(ForEach y xs inv s l)
-    | x /= bvar y = ForEach y xs (subst x a <$> inv) (subst x a s) l
-    | otherwise   = for
-  subst x a (Atomic s l)
-    = Atomic (subst x a s) l
-  subst x a (If p s1 s2 l)
-    = If (subst x a p) (subst x a s1) (subst x a s2) l
-  subst x a (Assert p b l)
-    = Assert (subst x a p) b l
-  subst _ _ (Skip l)
-    = Skip l
-  subst x a (Assume p l)
-    = Assume (subst x a p) l
-  subst x a (Par p ps i s l)
-    = Par p ps i (subst x a s) l
-  subst x a _
-    = error "subst stmt"
-  
-
-instance Subst Expr where
-  subst _ _ (Const i)
-    = Const i
-  subst x e v@(Var y)
-    | x == y    = e
-    | otherwise = v
-  subst x e (Bin o e1 e2)
-    = Bin o (subst x e e1) (subst x e e2)
-  subst x e (Select e1 e2)
-    = Select (subst x e e1) (subst x e e2)
-  subst x e (Store e1 e2 e3)
-    = Store (subst x e e1) (subst x e e2) (subst x e e3)
-  subst _ _ EmptySet
-    = EmptySet
-  subst x e (Size a)
-    = Size (subst x e a)
-  subst _ _ NonDetValue
-    = NonDetValue
-  subst x e (PExpr a)
-    = PExpr $ subst x e a
-
-instance Subst Prop where
-  subst x e                 = go
-    where go (Atom r e1 e2) = Atom r (subst x e e1) (subst x e e2)
-          go (Not p)        = Not (subst x e p)
-          go (And ps)       = And (go <$> ps)
-          go (Or ps)        = Or (go <$> ps)
-          go (p :=>: q)     = go p :=>: go q
-          go (Forall xs p)
-            | x `elem` (bvar <$> xs)
-            = Forall xs p
-            | otherwise
-            = Forall xs (go p)
-          go (Exists xs p)
-            | x `elem` (bvar <$> xs)
-            = Exists xs p
-            | otherwise
-            = Exists xs (go p)
-          go TT             = TT
-          go FF             = FF
-          go (Prop e')      = Prop (subst x e e')
-          go (Here e')      = Here $ subst x e e'
-          go (NonDetProp)   = NonDetProp
-          go (Let xs p)
-            | x `elem` (bvar . fst <$> xs) = Let xs p
-            | otherwise                    = Let xs (go p)
+    go                :: Stmt a -> [Binder]
+    go (Skip {..})    = []
+    go (Assert {..})  = []
+    go (Assume {..})  = []
+    go (If {..})      = go thenStmt ++ go elseStmt
+    go (Atomic {..})  = go atomicStmt
+    go (Assign {..})  = [assignBinder]
+    go (Seq {..})     = seqStmts >>= go
+    go (ForEach {..}) = forElement : go forStmt
+    go (While {..})   = go whileStmt
+    go (Cases {..})   = caseList >>= go . caseStmt
+    go (Par {..})     = go parStmt

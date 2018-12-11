@@ -6,7 +6,8 @@ import           Language.IceT.Types
 import           Text.ParserCombinators.Parsec
 import           Text.ParserCombinators.Parsec.Expr
 import           Text.ParserCombinators.Parsec.Language
-import qualified Text.ParserCombinators.Parsec.Token as Token
+import qualified Text.ParserCombinators.Parsec.Token    as Token
+import qualified Data.Functor.Identity                  as Identity
 
 {-
 Core languange:
@@ -77,11 +78,11 @@ program = do reserved "prog"
                t     <- stmt
                let vars  = [ v | B v <- declarations ]
                    cards = [ k | C k <- declarations ]
-               return Prog { decls     = vars
-                           , cardDecls = cards
-                           , ensures   = p
-                           , prog      = t
-                           }
+               return Program { decls     = vars
+                              , cardDecls = cards
+                              , ensures   = p
+                              , prog      = t
+                              }
              dot
              return p
   where
@@ -97,7 +98,7 @@ decl = do reserved "decl"
             s <- sort
             return $ Bind v s
 
-declCard :: Parser (Card a)
+declCard :: Parser (Card ParsedAnnot)
 declCard = functor "decl_card" $ do
   nm    <- ident
   comma
@@ -142,26 +143,34 @@ stmt =  skip
     <|> havoc
     <|> pre <|> assert <|> assume
 
+havoc :: Parser (Stmt ParsedAnnot)
 havoc = functor "havoc" $ do
   p <- ident
   comma
   x <- ident
   return (Assign p (Bind x Int) p NonDetValue p)
 
+pre :: Parser (Stmt ParsedAnnot)
 pre        = do (Assert p _ w) <- functor "pre" $ assertBody
                 return (Assert p True w)
+
+assume :: Parser (Stmt ParsedAnnot)
 assume     = functor "assume" $ do
   w <- ident
   comma
   p <- prop <?> "prop"
   return (Assume p w)
+
+assert :: Parser (Stmt ParsedAnnot)
 assert     = functor "assert" $ assertBody
+
+assertBody :: Parser (Stmt ParsedAnnot)  
 assertBody = do w <- ident
                 comma
                 p <- prop <?> "prop"
                 return (Assert p False w)
   
-
+par :: Parser (Stmt ParsedAnnot)
 par = functor "sym" $ do
   p <- ident
   comma
@@ -170,15 +179,17 @@ par = functor "sym" $ do
   s <- stmt
   return (Par p ps TT s "")
 
+atomic :: Parser (Stmt ParsedAnnot)
 atomic = do s <- functor "atomic" $ stmt
             return (Atomic s "")
 
-skip, assignment, seqs, cases, foreach, while :: Parser (Stmt ParsedAnnot)
+skip :: Parser (Stmt ParsedAnnot)
 skip = reserved "skip" >> return (Skip "")
 
+assignment :: Parser (Stmt ParsedAnnot)
 assignment = functor "assign" (try assignVars <|> assignConst)
 
-assignVars, assignConst :: Parser (Stmt ParsedAnnot)
+assignConst :: Parser (Stmt ParsedAnnot)
 assignConst = do
   p <- ident
   comma
@@ -187,6 +198,7 @@ assignConst = do
   es <- assignRHS
   matchAssign p p xs es
   
+assignVars :: Parser (Stmt ParsedAnnot)
 assignVars = do 
     p <- ident
     comma
@@ -197,14 +209,19 @@ assignVars = do
     ys <- assignRHS
     matchAssign p q xs ys
 
-matchAssign p q [i] [e]
-  = return $ Assign p (Bind i Int) q e p
+matchAssign :: Id -> Id -> [Id] -> [Expr ParsedAnnot] -> Parser (Stmt ParsedAnnot)
+matchAssign p q [i] [e] = return $ Assign p (Bind i Int) q e p
 matchAssign p q is es
-  | length is == length es
-  = return $ Seq ([Assign p (Bind i Int) q e p | i <- is | e <- es]) p
+  | length is == length es = return $ Seq ([Assign p (Bind i Int) q e p | i <- is | e <- es]) p
+  | otherwise              = error "matchAssign: lists have to be of equal size"
+
+assignLHS :: Parser [String]
 assignLHS = pairNested ident 
+
+assignRHS :: Parser [Expr ParsedAnnot]
 assignRHS = pairNested expr
 
+pairNested :: Parser a -> Parser [a]
 pairNested p
   = one <|> pair
   where one  = do { i <- p; return [i] }
@@ -214,13 +231,14 @@ pairNested p
           i2 <- (pairNested p)
           return (i1 ++ i2)
 
-
+seqs :: Parser (Stmt ParsedAnnot)
 seqs = do reserved "seq"
           stmts <- parens $ list stmt
           case stmts of
             [s] -> return s
             _   -> return $ Seq stmts ""
 
+ite :: Parser (Stmt ParsedAnnot)
 ite = functor "ite" $ do
   p <- ident
   comma
@@ -231,6 +249,7 @@ ite = functor "ite" $ do
   s2 <- stmt
   return $ If test s1 s2 p
 
+cases :: Parser (Stmt ParsedAnnot)
 cases = functor "cases" $ do
   p <- ident
   comma
@@ -241,6 +260,7 @@ cases = functor "cases" $ do
   stmt
   return $ Cases discr cs p
 
+casestmt :: Parser (Case ParsedAnnot)
 casestmt = functor "case" $ do
   p <- ident
   comma
@@ -249,6 +269,7 @@ casestmt = functor "case" $ do
   s <- stmt
   return $ Case e s p
 
+foreach :: Parser (Stmt ParsedAnnot)
 foreach = functor "for" $ do
   who <- ident
   comma
@@ -266,6 +287,8 @@ foreach = functor "for" $ do
                    (rest, inv)
                    s
                    who
+
+iter :: Parser (Stmt ParsedAnnot)
 iter = functor "iter" $ do
   k <- ident
   comma
@@ -277,7 +300,7 @@ iter = functor "iter" $ do
                    ("!i", inv)
                    s
                    ""
-  
+prop :: Parser (Prop ParsedAnnot)  
 prop = (reserved "true"  >> return TT)
    <|> (reserved "false" >> return FF)
    <|> (reserved "ndet" >> return NonDetProp)
@@ -292,56 +315,70 @@ prop = (reserved "true"  >> return TT)
    <|> hereProp
    <|> doneProp
    
+doneProp :: Parser (Prop ParsedAnnot)
 doneProp = functor "done" $ do
   p <- ident
   comma
   ps <- ident
   return $ Atom Eq (pc ps p) (Const (-1))
+
+atom :: Parser (Prop ParsedAnnot)
 atom = do e1 <- expr
           r  <- rel
           e2 <- expr
           return $ Atom r e1 e2
 
+rel :: Parser Rel
 rel =  try (reservedOp "=<"  >> return Le)
    <|> (reservedOp "<"  >> return Lt)
    <|> (reservedOp ">"  >> return Gt)
    <|> (reservedOp "=" >> return Eq)
 
+forallProp :: Parser (Prop ParsedAnnot)
 forallProp = functor "forall" $ do
   ds <- list decl
   comma
   p <- prop
   return $ Forall ds p
+
+existsProp :: Parser (Prop ParsedAnnot)
 existsProp = functor "exists" $ do
   ds <- list decl
   comma
   p <- prop
   return $ Exists ds p
 
+implies :: Parser (Prop ParsedAnnot)
 implies = functor "implies" $ do
   p1 <- prop
   comma
   p2 <- prop
   return (p1 :=>: p2)
 
+andProp :: Parser (Prop ParsedAnnot)
 andProp = functor "and" $ do
   ps <- list prop
   return $ And ps
 
+orProp :: Parser (Prop ParsedAnnot)
 orProp = functor "or" $ do
   ps <- list prop
   return $ Or ps
 
+notProp :: Parser (Prop ParsedAnnot)
 notProp = functor "not" $ (Not <$> prop)
 
+elemProp :: Parser (Prop ParsedAnnot)
 elemProp = functor "elem" $ do
   e1 <- expr
   comma
   e2 <- expr
   return $ Atom SetMem e1 e2
 
+hereProp :: Parser (Prop ParsedAnnot)
 hereProp = functor "here" $ (Here <$> expr)
 
+while :: Parser (Stmt ParsedAnnot)
 while = do reserved "While"
            parens $ do
              who <- ident
@@ -351,8 +388,7 @@ while = do reserved "While"
              s <- stmt
              return $ While x s who
 
--- expr = num <|> var <|> sel <|> sel' <|> ndet <|> binexpr
-
+expr :: Parser (Expr ParsedAnnot)
 expr = buildExpressionParser table term <?> "expression"
   where
     table = [ [ Infix (reservedOp "*" >> return (Bin Mul)) AssocLeft
@@ -364,10 +400,15 @@ expr = buildExpressionParser table term <?> "expression"
             ]
     term  = num <|> var <|> sel <|> set_add <|> size <|> upd <|> ndet <?> "term" 
 
+num :: Parser (Expr ParsedAnnot)
 num = do i <- integer
          return $ Const (fromInteger i)
+
+var :: Parser (Expr ParsedAnnot)
 var = do i <- ident
          return $ Var i
+
+sel :: Parser (Expr ParsedAnnot)
 sel = functor "sel" sel'
   <|> functor "ref" sel'
   <|> do {Select e1 e2 <- functor "varOf" sel'; return (Select e2 e1)}
@@ -378,40 +419,75 @@ sel = functor "sel" sel'
      e2 <- expr
      return (Select e1 e2)
 
+set_add :: Parser (Expr ParsedAnnot)
 set_add = functor "set_add" $ do
   e1 <- expr
   comma
   e2 <- expr
   return (Bin SetAdd e1 e2)
 
+size :: Parser (Expr ParsedAnnot)
 size = functor "card" $ do
   e <- expr
   return (Size e)
 
+upd :: Parser (Expr ParsedAnnot)
 upd = functor "upd" $ do
   Store <$> expr <*> (comma >> expr) <*> (comma >> expr)
 
+ndet :: Parser (Expr ParsedAnnot)
 ndet = reserved "ndet" >> return NonDetValue
 
+op :: Parser Op
 op = symbol "+" >> return Plus
 
-
+list :: Parser a -> Parser [a]
 list p = brackets $ commaSep p
+
+functor :: String -> Parser a -> Parser a
 functor f p = reserved f >> parens p
 
-lexer      = Token.makeTokenParser languageDef
-ident      = Token.identifier lexer
-reserved   = Token.reserved lexer
-integer    = Token.integer lexer
-comma      = Token.comma lexer
-dot        = Token.dot lexer
+-------------------------------------------------------------------------------
+-- Lexer
+-------------------------------------------------------------------------------
+
+lexer :: Token.GenTokenParser String a Identity.Identity
+lexer  = Token.makeTokenParser languageDef
+
+ident :: Parser String
+ident = Token.identifier lexer
+
+reserved :: String -> Parser ()
+reserved = Token.reserved lexer
+
+integer :: Parser Integer
+integer = Token.integer lexer
+
+comma :: Parser String
+comma = Token.comma lexer
+
+dot :: Parser String
+dot = Token.dot lexer
+
+whiteSpace :: Parser ()
 whiteSpace = Token.whiteSpace lexer
-parens     = Token.parens lexer
+
+parens :: Parser a -> Parser a
+parens = Token.parens lexer
+
+brackets :: Parser a -> Parser a
 brackets   = Token.brackets lexer
-commaSep   = Token.commaSep lexer
-symbol     = Token.symbol lexer
+
+commaSep :: Parser a -> Parser [a]
+commaSep = Token.commaSep lexer
+
+symbol :: String -> Parser String
+symbol = Token.symbol lexer
+
+reservedOp :: String -> Parser ()
 reservedOp = Token.reservedOp lexer
 
+languageDef :: GenLanguageDef String a Identity.Identity
 languageDef =
   emptyDef { Token.identStart    = letter <|> char '_'
            , Token.identLetter   = alphaNum <|> char '_'
