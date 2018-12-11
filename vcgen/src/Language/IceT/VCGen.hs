@@ -60,67 +60,63 @@ vcgen binders cards stmt prop = result
 -- Monads
 -------------------------------------------------------------------------------
 
-data VCState a = VCState { tenv    :: M.Map Id Sort
-                         , constrs :: M.Map Id Id
-                         , ictr    :: Int
-                         , freshed :: [Binder]
-                         , invs    :: [(Int, [Binder], Prop a)]
-                         , cards   :: [Card a]
-                         , gather  :: Bool
+data VCState a = VCState { tenv    :: M.Map Id Sort             -- type environment
+                         , constrs :: M.Map Id Id               -- TODO: type constructors ???
+                         , ictr    :: Int                       -- TODO: ???
+                         , freshed :: [Binder]                  -- TODO: ???
+                         , invs    :: [(Int, [Binder], Prop a)] -- TODO: ???
+                         , cards   :: [Card a]                  -- cardinalities
+                         , gather  :: Bool                      -- TODO: ???
                          }
 
 type VCGen a r = State (VCState a) r 
 
 -------------------------------------------------------------------------------
--- Weakest Liberal Preconditions
--------------------------------------------------------------------------------
-
+-- | Weakest Liberal Preconditions
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)   
+-------------------------------------------------------------------------------
 wlp (Skip _) prop = return prop
 
--- wlp (Assign a x b NonDetValue c) prop = do
-wlp stmt@(Assign {..}) prop
+wlp (Assign {..}) prop
+  -- p.x <- q.*
   | assignExpr == NonDetValue = do
       b' <- freshBinder assignBinder
       let stmt' = Assign { assignExpr = Var (bvar b'), .. }
       wlp stmt' prop
 
+  -- p.x <- p'.y
   | otherwise = do
-      select <- isSet p2
+      let p' = assignFromProcess
+          x  = bvar assignBinder
+          pr = process stmtData
+      select <- isSet p'
       v <- case assignExpr of
-             Var y | stmtProcess == p2 -> do
-                       t <- getType y
-                       ifM (isIndex t p2)
-                         (return $ Select assignExpr (Var p2))
-                         (return $ assignExpr)
-             Var y | select -> do
-                       t <- getType y
-                       ifM (isIndex t p2)
-                         (return $ Select assignExpr (Var p2))
-                         (return assignExpr)
+             Var y
+               -- local assignment
+               | stmtProcess == p' -> do
+                   t <- getType y
+                   ifM (isIndex t p')
+                     (return $ Select assignExpr (Var p'))
+                     (return $ assignExpr)
+               -- TODO ???
+               | select -> do
+                   t <- getType y
+                   ifM (isIndex t p')
+                     (return $ Select assignExpr (Var p'))
+                     (return assignExpr)
              _  -> return assignExpr
-      g <- gets constrs
-      
       ifM (isIndex (bsort assignBinder) pr)
-            (return $ subst (bvar assignBinder) (Store (Var i) (Var pr) v) prop)
+            (return $ subst (bvar assignBinder) (Store (Var x) (Var pr) v) prop)
             (return $ subst (bvar assignBinder) v prop)
+
+wlp (Seq {..}) prop = foldM (flip wlp) prop (reverse seqStmts)
+
+wlp (Cases {..}) prop
+  | casesExpr == NonDetValue = And <$> mapM (flip wlp prop . caseStmt) caseList
+  | otherwise               = And <$> mapM go caseList
   where
-    p2 = assignFromProcess
-    i  = bvar assignBinder
-    pr = process stmtData
-
--- wlp (Seq stmts _) p
---   = foldM (flip wlp) p (reverse stmts)
-
--- wlp (Cases NonDetValue cs _) p
---   = And <$> mapM (flip wlp p . caseStmt) cs
-
--- wlp (Cases e cs _) p
---   = And <$> mapM go cs
---   where
---     go c
---       = do wp <- wlp (caseStmt c) p
---            return (Atom Eq e (caseGuard c)  :=>: wp)
+    go (Case{..}) = do wp <- wlp caseStmt prop
+                       return $ Atom Eq casesExpr caseGuard :=>: wp
 
 -- wlp (ForEach x xs (rest, i) s _) p
 --   = do addElem (bvar xs) (bvar x)

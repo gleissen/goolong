@@ -78,7 +78,7 @@ data Stmt a = Skip    { stmtData :: a }
                       , elseStmt    :: Stmt a
                       , stmtData    :: a
                       }
-            | Cases   { caseExpr :: Expr a
+            | Cases   { casesExpr :: Expr a
                       , caseList :: [Case a]
                       , stmtData :: a
                       }
