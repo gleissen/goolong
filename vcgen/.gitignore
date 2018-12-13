@@ -1,3 +1,5 @@
 .stack-work/
 vcgen.cabal
 *~
+
+/src/Language/IceT/Test.hs

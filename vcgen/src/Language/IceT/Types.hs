@@ -55,7 +55,7 @@ data Stmt a = Skip    { stmtData :: a }
                       , stmtData       :: a
                       }
             | Assign  { stmtProcess       :: Id
-                      , assignBinder      :: Binder
+                      , assignVar         :: Binder
                       , assignFromProcess :: Id
                       , assignExpr        :: Expr a
                       , stmtData          :: a
@@ -84,7 +84,7 @@ data Stmt a = Skip    { stmtData :: a }
                       }
             | ForEach { forElement   :: Binder
                       , forList      :: Binder
-                      , forInvariant :: (Id, Prop a) -- invariant holds for every p in done set
+                      , forInvariant :: (Id, Prop a) -- (d, I)
                       , forStmt      :: Stmt a
                       , stmtData     :: a
                       }
@@ -136,7 +136,7 @@ data Prop a = TT
             | Let [(Binder, Expr a)] (Prop a)
             deriving (Eq, Show, Functor, Foldable, Traversable)
 
-data Binder = Bind { bvar :: Id
+data Binder = Bind { bvar  :: Id
                    , bsort :: Sort
                    }
             deriving (Eq, Show)
@@ -246,7 +246,7 @@ toActions (If {..}) = do
 
 toActions stmt = error $ printf "called toActions with %s %s" (show stmt)
 
-{- |
+{-|
 Given a statement that is executed atomically and the location of the statement,
 returns a pair that contains the location and the atomic action
 -}
@@ -264,7 +264,7 @@ toActionsHelper stmt loc = do
                       }
   return ([loc], [action])
 
-{- |
+{-|
 Given an immediate successor map, a statement and a list of successors, update
 the map with entries (o, (True, i)) where
 * o is a successor location
@@ -281,12 +281,15 @@ updCfgMap m stmt outs = foldl' (\m' o ->
     ins prop v (Just vs) = Just ((prop,v):vs)
   
 ----------------------------------------------------------------------------------------- 
-{- |
+{-|
 actions :: VCAnnot a
-        => Id
-        -> Stmt a
-        -> [Binder]
-        -> ([Int], [Action a], [Int])
+        => Id           : TODO: ???
+        -> Stmt a       : Statement to generate atomic actions from
+        -> [Binder]     : TODO: ???
+        -> ( [Int]      : Entry points to the statement
+           , [Action a] : List of atomic actions found
+           , [Int]      : Exit points
+           )
 -}
 actions :: VCAnnot a => Id -> Stmt a -> [Binder] -> ([Int], [Action a], [Int])
 ----------------------------------------------------------------------------------------- 
@@ -334,16 +337,14 @@ instance Subst Stmt where
 
 instance Subst Expr where
   subst _ _ (Const i)        = Const i
-  subst v e var@(Var x)
-    | v == x                 = e
-    | otherwise              = var
+  subst v e var@(Var x)      = if v == x then e else var
   subst v e (Bin o e1 e2)    = Bin o (subst v e e1) (subst v e e2)
   subst v e (Select e1 e2)   = Select (subst v e e1) (subst v e e2)
   subst v e (Store e1 e2 e3) = Store (subst v e e1) (subst v e e2) (subst v e e3)
   subst _ _ EmptySet         = EmptySet
   subst v e (Size a)         = Size (subst v e a)
   subst _ _ NonDetValue      = NonDetValue
-  subst v e (PExpr a)        = PExpr $ subst v e a
+  subst v e (PExpr a)        = PExpr (subst v e a)
   subst v e (Ite prop e1 e2) = Ite (subst v e prop) (subst v e e1) (subst v e e2)
 
 instance Subst Prop where
@@ -404,9 +405,10 @@ writes = nub . go
     go (Assume {..})  = []
     go (If {..})      = go thenStmt ++ go elseStmt
     go (Atomic {..})  = go atomicStmt
-    go (Assign {..})  = [assignBinder]
+    go (Assign {..})  = [assignVar]
     go (Seq {..})     = seqStmts >>= go
     go (ForEach {..}) = forElement : go forStmt
     go (While {..})   = go whileStmt
     go (Cases {..})   = caseList >>= go . caseStmt
     go (Par {..})     = go parStmt
+
