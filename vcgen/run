@@ -1,0 +1,43 @@
+#!/bin/zsh
+
+function blue()  { print -P "%F{blue}%B$1%b%f"  }
+function green() { print -P "%F{green}%B$1%b%f" }
+function red()   { print -P "%F{red}%B$1%b%f"   }
+
+THIS_DIR=${0:A:h}
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $0 <file>"
+  exit 1
+fi
+
+FILE="$1"
+SEQ_FILE="$1.seq"
+
+pushd "$THIS_DIR"
+
+ts=$(date +'%s%N')
+../brisk-sequentialize/brisk "$FILE" > "$SEQ_FILE"
+seq_ec=$?
+tt=$((($(date +'%s%N') - $ts)/1000000))
+
+blue "Rewrite: $tt milliseconds"
+
+if [[ $seq_ec -eq 0 ]]; then
+	green "Wrote synchronized file to $SEQ_FILE"
+else
+	red "Sequentialization failed !"
+	exit 1
+fi
+
+ts=$(date +'%s%N')
+stack exec vcgen -- "$SEQ_FILE"
+vc_ec=$?
+tt=$((($(date +'%s%N') - $ts)/1000000))
+
+blue "Check: $tt milliseconds"
+
+popd
+
+exit $vc_ec
+

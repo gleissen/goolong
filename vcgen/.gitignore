@@ -3,3 +3,4 @@ vcgen.cabal
 *~
 
 /src/Language/IceT/Test.hs
+/.liquid

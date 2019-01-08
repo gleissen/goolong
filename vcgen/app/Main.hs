@@ -10,10 +10,11 @@ main = do args <- getArgs
             []  -> getContents >>= verifyProgram >>= exit
             [f] -> verifyFile f >>= exit
             _   -> exitFailure
-  where exit True = do putStrLn (green ++ "✓ SAFE")
+  where exit True = do putStrLn (green "✓ SAFE")
                        exitSuccess
-        exit _    = do putStrLn (red ++ "✗ UNSAFE")
+        exit _    = do putStrLn (red "✗ UNSAFE")
                        exitFailure
 
-        green = "\x1b[32m"
-        red   = "\x1b[31m"
+        green s = "\x1b[32m \x1b[1m" ++ s ++ defaultColor
+        red s   = "\x1b[31m \x1b[1m" ++ s ++ defaultColor
+        defaultColor = "\x1b[0m"

@@ -5,22 +5,23 @@
 
 module Language.IceT.VCGen (verifyFile, verifyProgram) where
 
-import           Prelude hiding (and, or)
-import           Language.IceT.Types
 import           Language.IceT.Parse (parseFile, parseString)
-import           System.Exit
+import           Language.IceT.Pretty
+import           Language.IceT.SMT
+import           Language.IceT.Types
+
+import           Prelude hiding (and, or)
 import           Control.Monad.State
+import           Data.List (isInfixOf)
 import qualified Data.Map.Strict as M
-import qualified Language.Fixpoint.Horn.Types   as H
-import qualified Language.Fixpoint.Horn.Solve   as H
-import qualified Language.Fixpoint.Solver       as Solver
-import qualified Language.Fixpoint.Types.Config as F
+import           GHC.IO.Handle
+import           System.IO
+import           System.Exit
+import           System.Process
+import           Text.PrettyPrint.HughesPJ
+import           Text.Printf
 
-import Debug.Trace
-import Text.Printf
-
-type HornData = ()
-type Query = H.Query HornData
+-- import Debug.Trace
 
 -------------------------------------------------------------------------------
 verifyProgram :: String -> IO Bool
@@ -36,27 +37,65 @@ verifyFile fp = parseFile fp >>= verify
 verify :: VCAnnot a => Program a -> IO Bool
 -------------------------------------------------------------------------------
 verify (Program{..}) = do
-  result <- H.solve cfg query
-  code <- Solver.resultExitCode result
-  return $ code == ExitSuccess
+  writeFile ".query.icet" (pretty (coalesceLocal prog))
+  writeFile ".query.smt2" vcstr
+
+  (inp, out, err, pid) <- runInteractiveProcess "z3" ["-smt2", ".query.smt2"] Nothing Nothing
+  ec   <- waitForProcess pid
+  outp <- hGetContents out
+  errp <- hGetContents err
+
+  putStrLn outp
+  hPutStr stderr errp
+  
+  case ec of
+    ExitSuccess ->   return ("unsat" `isInfixOf` outp)
+    ExitFailure _ -> return False
 
   where
-    cfg = F.defConfig { F.save  = True
-                      , F.cores = Just 4
-                      }
-    query = vcgen decls cardDecls prog ensures
+    (binders, vc) = vcgen decls cardDecls prog ensures
+
+    vcstr = render $ vcat (prelude : declBinds binders ++  [checkValid vc])
+
+    prelude = text $ unlines [ "(define-sort Elt () Int)"
+                             , "(define-sort Set () (Array Elt Bool))"
+                             , "(define-sort IntMap () (Array Elt Elt))"
+                             , "(define-fun set_emp () Set ((as const Set) false))"
+                             , "(define-fun set_mem ((x Elt) (s Set)) Bool (select s x))"
+                             , "(define-fun set_add ((s Set) (x Elt)) Set  (store s x true))"
+                             , "(define-fun set_cap ((s1 Set) (s2 Set)) Set ((_ map and) s1 s2))"
+                             , "(define-fun set_cup ((s1 Set) (s2 Set)) Set ((_ map or) s1 s2))"
+                             , "(define-fun set_com ((s Set)) Set ((_ map not) s))"
+                             , "(define-fun set_dif ((s1 Set) (s2 Set)) Set (set_cap s1 (set_com s2)))"
+                             , "(define-fun set_sub ((s1 Set) (s2 Set)) Bool (= set_emp (set_dif s1 s2)))"
+                             , "(define-fun set_minus ((s1 Set) (x Elt)) Set (set_dif s1 (set_add set_emp x)))"
+                             , "(declare-fun set_size (Set) Int)"
+                             ]
+
+    declBinds = map declBind
+    declBind (Bind x s) = parens (text "declare-const" <+> text x <+> smt s)
+
+    checkValid f = parens (text "assert" <+> smt (Not f)) $+$ text "(check-sat)"
 
 -------------------------------------------------------------------------------
-vcgen :: VCAnnot a => [Binder] -> [Card a] -> Stmt a -> Prop a -> Query
+vcgen :: VCAnnot a => [Binder] -> [Card a] -> Stmt a -> Prop a -> ([Binder], Prop a)
 -------------------------------------------------------------------------------
-vcgen binders cards stmt prop = result
+vcgen binders cards stmt prop = (binders', vc)
   where
-    result = trace (printf "%s\n\n%s\n\n%s\n\n%s"
-                     (show binders)
-                     (show cards)
-                     (show stmt)
-                     (show prop)
-                   ) undefined
+    initialState = VCState { tenv       = tyEnv binders
+                           , unfoldings = M.empty
+                           , freshed    = []
+                           , ictr       = 0
+                           , invs       = []
+                           , gather     = False
+                           , cards      = cards
+                           }
+
+    action = do stmt' <- replaceSorts (coalesceLocal stmt)
+                wlp stmt' prop
+
+    (vc, st') = runState action initialState
+    binders'  = fmap (uncurry Bind) . M.toList $ tenv st'
 
 -------------------------------------------------------------------------------
 -- Monads
@@ -101,7 +140,6 @@ wlp (Assign {..}) q
                | p == p' || select -> do
                    t <- getType y
                    ifM (isIndex t p') (return $ Select assignExpr (Var p')) (return assignExpr)
-               | otherwise -> error "wlp(Assign{..}) : p' is not defined"
              _  -> return assignExpr
       ifM (isIndex (bsort assignVar) pr)
             (return $ subst (bvar assignVar) (Store (Var x) (Var pr) v) q)
@@ -204,10 +242,9 @@ wlp (Par p ps prop stmt _) q = do
                                         , pcGuard p ps actionLocation
                                         ]
           invAt l = subst (pcName ps) (Store (Var (pcName ps)) (Var p) (Const l)) i
-          outLocs = case actionExits of
-                      [] -> error "action exist list is empty"
-                      l  -> snd <$> l
-          post    = And $ [ invAt o | o <- outLocs ]
+          post    = case actionExits of
+                      [] -> TT
+                      l  -> And $ [ invAt o | o <- snd <$> l ]
 
       modify $ \st -> seq g st { unfoldings = M.union (M.fromList actionProcesses) us
                                , tenv       = te'
@@ -278,8 +315,21 @@ replaceSorts (Seq {..}) = do
   return $ Seq { seqStmts = stmts' , .. }
 
 replaceSorts (ForEach {..}) = do
-  stmt' <- replaceSorts forStmt
-  return $ ForEach { forStmt = stmt', .. }
+  g <- gets unfoldings
+  case M.lookup p g of
+    Nothing -> do
+      stmt' <- replaceSorts forStmt
+      return $ ForEach { forStmt = stmt', .. }
+    Just ps -> do
+      stmt' <- replaceSorts (subst (bvar forElement) xmap forStmt)
+      return $ ForEach { forElement = liftSo forElement ps
+                       , forStmt = stmt'
+                       , ..
+                       }
+  where
+    p = process stmtData
+    liftSo x ps = x { bsort = Map (SetIdx ps) (bsort x) }
+    xmap = Select (Var (bvar forElement)) (Var p)
 
 replaceSorts (If {..}) = do
   then' <- replaceSorts thenStmt
