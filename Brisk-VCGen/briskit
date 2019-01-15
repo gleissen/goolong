@@ -12,18 +12,18 @@ FILE="$1"
 SEQ_FILE="$1.seq"
 # REWRITECMD="${REWRITE} -a $FILE"
 
-pushd "$THIS_DIR"
 
 ts=$(date +'%s%N')
-./brisk-sequentialize/brisk "$FILE" > "$SEQ_FILE"
+../brisk-sequentialize/brisk "$FILE" > "$SEQ_FILE"
 tt=$((($(date +'%s%N') - $ts)/1000000))
 echo "Rewrite: $tt milliseconds"
-echo "Write synchronized file to $SEQ_FILE"
 
 ts=$(date +'%s%N')
-stack exec briskly -- "$SEQ_FILE"
+pushd $THIS_DIR
+stack exec -- briskly "$SEQ_FILE"
+popd
 tt=$((($(date +'%s%N') - $ts)/1000000))
 echo "Check: $tt milliseconds"
 
-popd
+
 

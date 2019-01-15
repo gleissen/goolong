@@ -8,8 +8,6 @@ GOCHAI_SRC_DIR="${GOCHAI_DIR}/src"
 CHECKER="${GOCHAI_DIR}/bin/paxoschk"
 MP_CHECKER="${GOCHAI_DIR}/bin/multipaxoschk"
 
-VCGEN_DIR="${THIS_DIR}/vcgen"
-
 TMP_DIR="${GOCHAI_DIR}/.tmp"
 mkdir -p "$TMP_DIR"
 
@@ -25,6 +23,7 @@ GO_FILES=( \
 
 # argument parsing {{{
 zparseopts -D -E -- \
+	       -old=OLD \
            h=HELP -h=HELP
 
 function blue()  { print -P "%F{blue}%B$1%b%f" }
@@ -61,6 +60,11 @@ if [[ $# -gt 0 ]]; then
 	exit 1
 fi
 
+if [[ -z "$OLD" ]]; then
+	VCGEN_DIR="${THIS_DIR}/vcgen"
+else
+	VCGEN_DIR="${THIS_DIR}/Brisk-VCGen"
+fi
 # }}}
 
 # helper functions {{{
