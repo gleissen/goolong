@@ -1,7 +1,8 @@
 prog(tmp, 
      [ decl(ho,map(set(ps),int)),
        decl(as,set), 
-       decl(ps,set)
+       decl(ps,set),
+       decl(foo,int)
      ], 
      ensures(true),
      seq([ for(_,A,ps,r,true,atomic(seq([assign(A,ho,0)]))),

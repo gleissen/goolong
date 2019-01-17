@@ -63,7 +63,8 @@ func runCoordinatorProtocol(peerAddresses []string) {
 		}
 	}
 	// -- Second phase --
-	if abort.Get() == 0 {
+	// FIXME
+	if abort.Get() == 1 {
 		reply.Assign(1)
 		committed.Assign(1)
 	} else {
