@@ -21,7 +21,11 @@ import           System.Process
 import           Text.PrettyPrint.HughesPJ
 import           Text.Printf
 
--- import Debug.Trace
+import Debug.Trace
+
+trc :: VCAnnot a => Stmt a -> Prop a -> Prop a -> VCGen a ()
+-- trc stmt p q = traceM $ printf "[[[ %s\n :::\n%s\n ===>>>\n%s ]]]" (pretty stmt) (smtS p) (smtS q)
+trc _ _ _ = return ()
 
 -------------------------------------------------------------------------------
 verifyProgram :: String -> IO Bool
@@ -92,6 +96,7 @@ vcgen binders cards stmt prop = (binders', vc)
                            }
 
     action = do stmt' <- replaceSorts (coalesceLocal stmt)
+                traceM $ printf "starting with: %s" (pretty stmt')
                 wlp stmt' prop
 
     (vc, st') = runState action initialState
@@ -119,14 +124,18 @@ type VCGen a r = State (VCState a) r
 -- | Weakest Liberal Preconditions
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
 -------------------------------------------------------------------------------
-wlp (Skip _) q = return q
+wlp stmt@(Skip _) q = do
+  trc stmt q q
+  return q
 
-wlp (Assign {..}) q
+wlp stmt@(Assign {..}) q
   -- p.x <- q.*
   | assignExpr == NonDetValue = do
       b' <- freshBinder assignVar
       let stmt' = Assign { assignExpr = Var (bvar b'), .. }
-      wlp stmt' q
+      res <- wlp stmt' q
+      trc stmt q res
+      return res
 
   -- p.x <- p'.expr
   | otherwise = do
@@ -141,11 +150,19 @@ wlp (Assign {..}) q
                    t <- getType y
                    ifM (isIndex t p') (return $ Select assignExpr (Var p')) (return assignExpr)
              _  -> return assignExpr
-      ifM (isIndex (bsort assignVar) pr)
-            (return $ subst (bvar assignVar) (Store (Var x) (Var pr) v) q)
-            (return $ subst (bvar assignVar) v q)
+      foo <- isIndex (bsort assignVar) pr
+      traceM $ printf "[[[ %s ||| isIndex: %s ]]]" (pretty stmt) (show foo)
+      res <- ifM (isIndex (bsort assignVar) pr)
+             (return $ subst (bvar assignVar) (Store (Var x) (Var pr) v) q)
+             (return $ subst (bvar assignVar) v q)
+      trc stmt q res
+      return res
+      
 
-wlp (Seq {..}) q = foldM (flip wlp) q (reverse seqStmts)
+wlp stmt@(Seq {..}) q = do
+  res <- foldM (flip wlp) q (reverse seqStmts)
+  trc stmt q res
+  return res
 
 wlp (Cases {..}) q
   | casesExpr == NonDetValue = And <$> mapM (flip wlp q . caseStmt) caseList
@@ -154,7 +171,7 @@ wlp (Cases {..}) q
     go (Case{..}) = do wp <- wlp caseStmt q
                        return $ (Atom Eq casesExpr caseGuard) :=>: wp
 
-wlp (ForEach x xs (done, i) stmt _) q = do
+wlp thisStmt@(ForEach x xs (done, i) stmt _) q = do
   -- add x \in xs to the unfoldings
   addElem (bvar x) (bvar xs)
 
@@ -163,13 +180,16 @@ wlp (ForEach x xs (done, i) stmt _) q = do
 
   removeElem (bvar x)
 
-  return $ And [ subst done EmptySet i -- I[{} / d]
-               , Forall va $ And [ subst done exs i        -- I[xs/d]
-                                 , Atom SetMem ex exs      -- x \in xs
-                                 , Not $ Atom SetMem ex ed -- x  \not\in d
-                                 ] :=>: i2
-               , Forall va $ subst done (Var (bvar xs)) i :=>: q
-               ]
+  let res = And [ subst done EmptySet i -- I[{} / d]
+                , Forall va $ And [ subst done exs i        -- I[xs/d]
+                                  , Atom SetMem ex exs      -- x \in xs
+                                  , Not $ Atom SetMem ex ed -- x  \not\in d
+                                  ] :=>: i2
+                , Forall va $ subst done (Var (bvar xs)) i :=>: q
+                ]
+  trc thisStmt q res
+  return res
+
   where
     ex  = Var (bvar x)
     exs = Var (bvar xs)
@@ -258,7 +278,7 @@ wlp (Par p ps prop stmt _) q = do
 
       return $ Forall actionScope $ Let (cardInits ks ((p,ps):actionProcesses)) (g :=>: inductive)
 
-wlp (If {..}) q = do
+wlp stmt@(If {..}) q = do
   p1 <- wlp thenStmt q
   p2 <- wlp elseStmt q
   let result = case ifCondition of
@@ -266,6 +286,7 @@ wlp (If {..}) q = do
                  _          -> [ ifCondition :=>: p1
                                , Not ifCondition :=>: p2
                                ]
+  trc stmt q (And result)
   return $ And result
 
 wlp (Assert p pre _) q = do

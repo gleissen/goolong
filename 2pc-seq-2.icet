@@ -8,7 +8,7 @@ prog(tmp,
       decl(myVote,map(set(dbs),int)),
       decl(dbs,set)
      ],
-
+     
      ensures(and([forall([decl(i,int)],
                          implies(and([elem(i,dbs),
                                       committed = 1]),
@@ -17,28 +17,33 @@ prog(tmp,
                          implies(and([elem(i,dbs),
                                       committed = 0]),
                                  ref(value,i) = 0))])),
-
+     
      seq([assign(c,abort,0),
 
           for(c,A,dbs,rr,
               forall([decl(i,int)],
                      implies(and([elem(i,rr)]),
-                             and([ref(value,i) = 0,
-                                  ref(tmpValue,i) = proposal]))),
+                             and([ref(tmpValue,i) = proposal,
+                                  ref(value,i) = 0]))),
               seq([assign(A,value,0),
                    assign(A,tmpValue,c,proposal),
                    ite(c,ref(myVote,A)=0,
-                       seq([assign(c,abort,1)]),
+                       assign(c,abort,1), 
                        skip)])),
 
-          ite(c,abort=1,
-              seq([assign(c,committed,1)]),
-              seq([assign(c,committed,0)])),
+          ite(c, abort = 1,
+              assign(c,committed,1),
+              assign(c,committed,0)),
 
           for(c,A,dbs,rr,
               forall([decl(i,int)],
-                     and([implies(and([elem(i,rr),  committed=1]), ref(value,i)=ref(tmpValue,i)),
-                          implies(and([elem(i,dbs), committed=0]), ref(value,i)=0)])),
+                     and([implies(and([elem(i,rr),
+                                       committed = 1]),
+                                  ref(value,i) = ref(tmpValue,i)),
+                          implies(and([elem(i,dbs),
+                                       committed=0]),
+                                  ref(value,i)=0)])),
               seq([ite(A,committed=1,
                        seq([assign(A,value,ref(tmpValue,A))]),
-                       skip)]))])).
+                       skip)]))
+         ])).

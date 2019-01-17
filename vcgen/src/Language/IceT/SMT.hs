@@ -6,6 +6,9 @@ import Text.PrettyPrint.HughesPJ
 class SMT a where
   smt :: a -> Doc
 
+  smtS :: a -> String
+  smtS = renderStyle (style { lineLength = 200 }) . smt
+
 instance SMT (Prop a) where
   smt TT             = text "true"
   smt FF             = text "false"

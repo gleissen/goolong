@@ -2,8 +2,8 @@ module Main where
 
 import System.Environment
 import System.Exit
--- import Language.IceT.VCGen
-import Language.IceT.VCGen2
+import Language.IceT.VCGen
+-- import Language.IceT.VCGen2
 
 main :: IO ()
 main = do args <- getArgs
