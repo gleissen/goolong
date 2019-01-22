@@ -20,6 +20,8 @@ dependencies:
 - process
 - containers
 - liquid-fixpoint
+- unordered-containers
+- fgl
 
 library:
   source-dirs: src

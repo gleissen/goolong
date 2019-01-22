@@ -61,25 +61,8 @@ verify (Program{..}) = do
 
     vcstr = render $ vcat (prelude : declBinds binders ++  [checkValid vc])
 
-    prelude = text $ unlines [ "(define-sort Elt () Int)"
-                             , "(define-sort Set () (Array Elt Bool))"
-                             , "(define-sort IntMap () (Array Elt Elt))"
-                             , "(define-fun set_emp () Set ((as const Set) false))"
-                             , "(define-fun set_mem ((x Elt) (s Set)) Bool (select s x))"
-                             , "(define-fun set_add ((s Set) (x Elt)) Set  (store s x true))"
-                             , "(define-fun set_cap ((s1 Set) (s2 Set)) Set ((_ map and) s1 s2))"
-                             , "(define-fun set_cup ((s1 Set) (s2 Set)) Set ((_ map or) s1 s2))"
-                             , "(define-fun set_com ((s Set)) Set ((_ map not) s))"
-                             , "(define-fun set_dif ((s1 Set) (s2 Set)) Set (set_cap s1 (set_com s2)))"
-                             , "(define-fun set_sub ((s1 Set) (s2 Set)) Bool (= set_emp (set_dif s1 s2)))"
-                             , "(define-fun set_minus ((s1 Set) (x Elt)) Set (set_dif s1 (set_add set_emp x)))"
-                             , "(declare-fun set_size (Set) Int)"
-                             ]
-
     declBinds = map declBind
     declBind (Bind x s) = parens (text "declare-const" <+> text x <+> smt s)
-
-    checkValid f = parens (text "assert" <+> smt (Not f)) $+$ text "(check-sat)"
 
 -------------------------------------------------------------------------------
 vcgen :: VCAnnot a => [Binder] -> [Card a] -> Stmt a -> Prop a -> ([Binder], Prop a)

@@ -32,6 +32,9 @@ instance Process Id where
 
 type Id = String
 
+instance Process (Id, Int) where
+  process = fst
+
 data Program a = Program { decls     :: [Binder]
                          , cardDecls :: [Card a]
                          , prog      :: Stmt a
@@ -393,8 +396,14 @@ firstOf stmt           = [ getStmtLoc stmt ]
 pc :: Id -> Id -> Expr a
 pc ps p = Select (Var (pcName ps)) (Var p)
 
+pc' :: Id -> Id -> Expr a
+pc' ps p = Select (Var (pcName' ps)) (Var p)
+
 pcName :: Id -> Id
 pcName ps = "pc!" ++ ps
+
+pcName' :: Id -> Id
+pcName' ps = "pc'!" ++ ps
 
 writes :: Stmt a -> [Binder]
 writes = nub . go
@@ -411,4 +420,3 @@ writes = nub . go
     go (While {..})   = go whileStmt
     go (Cases {..})   = caseList >>= go . caseStmt
     go (Par {..})     = go parStmt
-
