@@ -66,8 +66,10 @@ data Stmt a = Skip    { stmtData :: a }
             | Seq     { seqStmts :: [Stmt a]
                       , stmtData :: a
                       }
-            | Atomic  { atomicStmt :: Stmt a
-                      , stmtData   :: a
+            | Atomic  { atomicStmt  :: Stmt a
+                      , atomicPost  :: Prop a
+                      , atomicLabel :: Int
+                      , stmtData    :: a
                       }
             | Assume  { stmtProperty :: Prop a
                       , stmtData     :: a

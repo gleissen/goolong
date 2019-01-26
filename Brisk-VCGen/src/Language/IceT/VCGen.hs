@@ -5,7 +5,7 @@ module Language.IceT.VCGen (verifyFile, verifyProgram) where
 import Prelude hiding (and, or)
 import Language.IceT.Types
 import Language.IceT.SMT
-import Language.IceT.Pretty (pp, render)
+import Language.IceT.Pretty (pp, render, pretty)
 import Language.IceT.Parse (parseFile, parseString)
 
 import Control.Monad.State
@@ -279,9 +279,14 @@ wlp (Par i is _ s _) p
   = do modify $ \s -> s { tenv = M.insert (pcName is) (Map (SetIdx is) Int) (tenv s) }
        addElem is i
        bs      <- vcBinds
+
+       -- traceM $ printf "i: %s\ns:%s\nbs: %s" (show i) (pretty s) (pretty bs)
+  
        let (pc0, acts, outs) = as bs
            actsLocs     = replaceHere i is <$> acts
            exitCond     = Or [pcGuard i is x | x <- outs]
+
+       -- traceM $ printf "pc0: %s\nacts:\n%s\nouts: %s" (show pc0) (pretty acts) (show outs)
 
        inv     <- actionsInvariant i is actsLocs
 

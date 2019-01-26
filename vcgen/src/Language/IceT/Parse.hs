@@ -181,7 +181,11 @@ par = functor "sym" $ do
 
 atomic :: Parser (Stmt ParsedAnnot)
 atomic = do s <- functor "atomic" $ stmt
-            return (Atomic s "")
+            return $ Atomic { atomicStmt  = s
+                            , atomicPost  = TT
+                            , atomicLabel = 0
+                            , stmtData    = ""
+                            }
 
 skip :: Parser (Stmt ParsedAnnot)
 skip = reserved "skip" >> return (Skip "")

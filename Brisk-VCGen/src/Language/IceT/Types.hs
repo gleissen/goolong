@@ -149,6 +149,9 @@ label s = evalState (mapM go s) 0
               return (s, i)
 
 firstOf :: VCAnnot a => Stmt (a, Int) -> [Int]
+-- FIXME
+-- firstOf (Skip (_,i))
+--   = [i]
 firstOf (Skip _)
   = []
 firstOf (Assign _ _ _ _ (_,i))
@@ -255,13 +258,18 @@ cfg p s = m . snd $ runState (toActions p s) (CFG [] [] M.empty M.empty)
 -------------------------------------------------------------------------------
 -- Formulas
 -------------------------------------------------------------------------------
+
 and :: [Prop a] -> Prop a
 and ps  = case compact TT ps of
             []  -> TT
+            -- FIXME
+            -- []  -> error "'and' is called with an empty list !"
             [p] -> p
             ps'  -> And ps'
 or ps = case compact FF ps of
           [] -> FF
+          -- FIXME
+          -- []  -> error "'or' is called with an empty list !"
           [p] -> p
           ps' -> Or ps'
 compact one ps = L.filter (/= one) (simplify <$> ps)

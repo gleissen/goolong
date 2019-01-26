@@ -154,6 +154,7 @@ wlp (Par {..}) q = do
                   , arPC0    = pc0
                   , arPCExit = pcExit
                   } = extractCFG freshCounter parStmt
+  traceM (show m)
   put VCState { freshCounter = pcExit + 1 , .. }
   let i = Forall [Bind stmtProcess Int] $
           And [ And [ Atom SetMem varP varPs
@@ -161,7 +162,7 @@ wlp (Par {..}) q = do
                     ] 
                 :=>:
                 Or [ let la' = m IM.! l'
-                     in Prop $ laLabel la'
+                     in atomicPost la'
                    | l' <- G.pre g l
                    ]
               | (l, la) <- IM.toList m
@@ -180,11 +181,11 @@ wlp (Par {..}) q = do
                     ] :=>: q
       cf l = And [ Atom Eq (pc p ps) (Const l)
                  , Or [ Atom Eq varPC' (Store varPC varP (Const l'))
-                      |  l' <- G.pre g l
+                      |  l' <- G.suc g l
                       ]
                  ]
   conjunts <- mapM (\(la_pc,la) -> do
-                       let stmt' = subst p varP0 (laStmt la)
+                       let stmt' = subst p varP0 (atomicStmt la)
                            q'    = subst (pcName ps) varPC' i
                        prop <- wlp stmt' q'
                        return (la_pc, la, prop)
