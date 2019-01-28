@@ -13,6 +13,7 @@ import           Language.IceT.Action
 import           Control.Monad.State
 import qualified Data.Graph.Inductive.Graph        as G
 import qualified Data.HashMap.Strict               as HM
+import qualified Data.HashSet                      as HS
 import qualified Data.IntMap.Strict                as IM
 import           Data.List (nub, isInfixOf)
 import           GHC.IO.Handle
@@ -21,14 +22,16 @@ import           System.IO
 import           System.Process
 import           Text.Printf
 
--- import Debug.Trace
+import Debug.Trace
 
+type TypeEnv a = HM.HashMap Id Sort
 data VCState a = VCState { freshCounter      :: Int
-                         , typeEnv           :: HM.HashMap Id Sort
+                         , typeEnv           :: TypeEnv a
                          , unfoldedProcesses :: HM.HashMap Id Id -- p -> ps
+                         , parallelProcesses :: HS.HashSet Id    -- symmetric sets we have seen so far
                          }
 
-type VCGen a r = State (VCState a) r 
+type VCGen a r = State (VCState a) r
 
 verifyProgram :: String -> IO Bool
 verifyProgram = verify . parseString
@@ -51,26 +54,31 @@ verify (Program{..}) = do
 
   putStrLn outp
   hPutStr stderr errp
-  
+
   case ec of
     ExitSuccess   -> return ("unsat" `isInfixOf` outp)
     ExitFailure _ -> return False
 
   where
-    vcstr = createSMTQuery decls' vc
-                          
+    vcstr = createSMTQuery decls' pss vc
+
     (vc, lastState) = runState action initialState
     initialState = VCState { freshCounter      = 0
-                           , typeEnv           = makeTypeEnv decls
+                           , typeEnv           = tenv
                            , unfoldedProcesses = HM.empty
+                           , parallelProcesses = HS.empty
                            }
+    tenv   = makeTypeEnv decls
     decls' = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
-    action = wlp prog ensures
+    action = wlp prog' ensures
+    prog'  = updateTypes tenv prog
+    pss    = HS.toList $ parallelProcesses lastState
 
 -------------------------------------------------------------------------------
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
 -------------------------------------------------------------------------------
 wlp (Skip {..}) q = return q
+
 wlp (Assign {assignExpr = NonDetValue, ..}) q = do
   v' <- freshBinder assignVar
   wlp (Assign { assignExpr = Var (bvar v'), ..}) q
@@ -84,10 +92,11 @@ wlp (Assign {..}) q = do
          Var y | c -> do t <- getType y
                          check <- isIndex t p'
                          return $ if   check
-                                  then Select e (Var p')
+                                  then let res = Select e (Var p')
+                                       in trace (smtS res) res
                                   else e
          _ -> return e
-  let pr = process stmtData 
+  let pr = process stmtData
       i  = bvar assignVar
       s  = bsort assignVar
   ifM (isIndex s pr)
@@ -98,7 +107,7 @@ wlp (Assume {..}) q = return $ stmtProperty :=>: q
 
 wlp (Assert {..}) q = return $ And [stmtProperty, q]
 
-wlp (Atomic {..}) q = wlp atomicStmt q  
+wlp (Atomic {..}) q = wlp atomicStmt q
 
 wlp (Seq {..}) q = foldM f q (reverse seqStmts)
   where
@@ -154,17 +163,24 @@ wlp (Par {..}) q = do
                   , arCFG    = g
                   , arPC0    = pc0
                   , arPCExit = pcExit
-                  } = extractCFG freshCounter parStmt
-  put VCState { freshCounter = pcExit + 1 , .. }
+                  } = extractCFG stmtProcessSet freshCounter parStmt
+  put VCState { freshCounter      = pcExit + 1
+              , parallelProcesses = HS.insert stmtProcessSet parallelProcesses
+              , ..
+              }
   let i = Forall [Bind stmtProcess Int] $
           And [ And [ Atom SetMem varP varPs
-                    , Atom Eq (pc p ps) (Const l)
-                    ] 
+                    , Atom Eq (pc ps p) (Const l)
+                    ]
                 :=>:
-                Or [ let la' = m IM.! l'
-                     in atomicPost la'
-                   | l' <- G.pre g l
-                   ]
+                let posts = [ let la' = m IM.! l'
+                              in atomicPost la'
+                            | l' <- G.pre g l
+                            , l' /= pc0 && l' /= pcExit
+                            ]
+                in case posts of
+                     [] -> TT
+                     _  -> Or posts
               | (l, la) <- IM.toList m
               ]
       invInit = ( Forall [Bind stmtProcess Int] $
@@ -179,7 +195,7 @@ wlp (Par {..}) q = do
                           ]
                     , i
                     ] :=>: q
-      cf l = And [ Atom Eq (pc p ps) (Const l)
+      cf l = And [ Atom Eq (pc ps p) (Const l)
                  , Or [ Atom Eq varPC' (Store varPC varP (Const l'))
                       |  l' <- G.suc g l
                       ]
@@ -198,11 +214,14 @@ wlp (Par {..}) q = do
                 And [ And [i, cf l] :=>: w
                     | (l, _, w) <- conjunts
                     ]
-  return q
+  return $ And [ invInit
+               , invStep
+               , invExit
+               ]
 
   where
-    y = Bind (pcName stmtProcessSet) Set :
-        Bind (pcName' stmtProcessSet) Set :
+    y = Bind (pcName stmtProcessSet) pcType :
+        Bind (pcName' stmtProcessSet) pcType :
         updatedVars parStmt
     p0 = stmtProcess ++ "0"
     p  = stmtProcess
@@ -231,7 +250,7 @@ incrCounter = do
                                    , ..
                                    }
   return n
-  
+
 getType :: Id -> VCGen a Sort
 getType x = do
   te <- gets typeEnv
@@ -296,3 +315,44 @@ updatedVars = nub . go
 
 makeTypeEnv :: [Binder] -> HM.HashMap Id Sort
 makeTypeEnv bs = HM.fromList [ (x,t) | Bind x t <- bs ]
+
+updateTypes :: TypeEnv a -> Stmt a -> Stmt a
+updateTypes tenv s = go s
+  where
+    go (Skip {..})    = Skip {..}
+    go (If {..})      = If { thenStmt = go thenStmt
+                           , elseStmt = go elseStmt
+                           , ..
+                           }
+    go (Atomic {..})  = Atomic { atomicStmt = go atomicStmt
+                               , ..
+                               }
+    go (Assign {..})  = Assign { assignVar = updateVar assignVar
+                               , ..
+                               }
+    go (Seq {..})     = Seq { seqStmts = go <$> seqStmts
+                            , ..
+                            }
+    go (ForEach {..}) = ForEach { forStmt = go forStmt
+                                , ..
+                                }
+    go (While {..})   = While { whileStmt = go whileStmt
+                              ,  ..
+                              }
+    go (Cases {..})   = Cases { caseList = (
+                                  \Case{..} -> Case { caseStmt = go caseStmt
+                                                    , ..
+                                                    }
+                                  ) <$> caseList
+                              , ..
+                              }
+    go (Par {..})     = Par { parStmt = go parStmt
+                            , ..
+                            }
+    go (Assert {..})  = Assert {..}
+    go (Assume {..})  = Assume {..}
+
+    updateVar b@(Bind v t) =
+      case HM.lookup v tenv of
+        Nothing   -> b
+        Just sort -> Bind v sort

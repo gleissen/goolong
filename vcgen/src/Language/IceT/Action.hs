@@ -4,8 +4,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Language.IceT.Action ( atomize
-                            , extractCFG
+module Language.IceT.Action ( extractCFG
                             , ActionResult(..)
                             ) where
 
@@ -210,22 +209,24 @@ atomize c parStatement = (atomizeResult, freshCounter st')
 
 
 --------------------------------------------------------------------------------
--- given a statement, returns the following:
+-- given a symmetric set, a counter and a statement, returns the following:
 -- 1. A map from program counters to statements
 -- 2. initial program location (l_0)
 -- 3. last program location (l_exit)
 -- 4. control flow graph
 --------------------------------------------------------------------------------
-extractCFG :: (Show a, VCAnnot a) => Int -> Stmt a -> ActionResult a
+extractCFG :: (Show a, VCAnnot a) => Id -> Int -> Stmt a -> ActionResult a
 --------------------------------------------------------------------------------
-extractCFG initCounter stmt = ActionResult { arMap    = createActionMap atomizedStmt
-                                           , arPC0    = pc0
-                                           , arPCExit = pcExit
-                                           , arCFG    = g
-                                           }
+extractCFG ps initCounter stmt =
+  ActionResult { arMap    = createActionMap atomizedStmt
+               , arPC0    = pc0
+               , arPCExit = pcExit
+               , arCFG    = g
+               }
   where
     pc0 = initCounter
-    (atomizedStmt, pcExit) = atomize (pc0 + 1) stmt
+    (atomizedStmt0, pcExit) = atomize (pc0 + 1) stmt
+    atomizedStmt = replaceHere ps atomizedStmt0
     -- atomizedStmt = trace (pretty _atomizedStmt) _atomizedStmt
 
     g :: CFG
@@ -357,3 +358,60 @@ incrCounter = do
   n <- gets freshCounter
   modify $ \ActionState{..} -> ActionState { freshCounter = n + 1 , .. }
   return n
+
+replaceHere :: Id -> Stmt a -> Stmt a
+replaceHere ps stmt = go undefined stmt
+  where
+    go :: Int -> Stmt a -> Stmt a
+    go n (Seq {..}) =
+      Seq { seqStmts = (go n) <$> seqStmts
+          , ..
+          }
+    go n (ForEach {..}) =
+      ForEach { forStmt      = go n forStmt
+              , forInvariant = (d, goProp n i)
+              , ..
+              }
+      where
+        (d,i) = forInvariant
+    go n (While {..}) =
+      While { whileStmt = go n whileStmt
+            , ..
+            }
+    go n (If {..}) =
+      If { thenStmt = go n thenStmt
+         , elseStmt = go n elseStmt
+         , ..
+         }
+    go n (Cases {..}) =
+      Cases { caseList = (
+                \Case{..} -> Case { caseStmt = go n caseStmt
+                                  , ..
+                                  }
+                ) <$> caseList
+            , ..
+            }
+    go n (Atomic {..}) =
+      Atomic { atomicStmt = go atomicLabel atomicStmt
+             , atomicPost = goProp atomicLabel atomicPost
+             , ..
+             }
+    go n (Assume {..}) =
+      Assume { stmtProperty = goProp n stmtProperty
+             , ..
+             }
+    go n (Assert {..}) =
+      Assert { stmtProperty = goProp n stmtProperty
+             , ..
+             }
+    go _ (Assign {..}) = Assign {..}
+    go _ (Skip {..}) = Skip {..}
+    go _ s = error $ printf "replaceHere.go is called with an unsupported stmt:\n%s" (pretty s)
+
+    goProp n (Here e)      = Atom Eq (Select (Var (pcName ps)) e) (Const n)
+    goProp n (Forall xs a) = Forall xs $ goProp n a
+    goProp n (a :=>: b)    = goProp n a :=>: goProp n b
+    goProp n (And as)      = And (goProp n <$> as)
+    goProp n (Or as)       = Or (goProp n <$> as)
+    goProp n (Not a)       = Not $ goProp n a
+    goProp n a             = a

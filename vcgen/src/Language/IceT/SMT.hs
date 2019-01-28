@@ -1,4 +1,5 @@
 module Language.IceT.SMT ( smt
+                         , smtS
                          , createSMTQuery
                          ) where
 
@@ -95,5 +96,12 @@ declareConsts bs =
          | (Bind x s) <- bs
          ]
 
-createSMTQuery :: [Binder] -> Prop a -> String
-createSMTQuery bs vc = render $ vcat $ prelude : declareConsts bs : [checkValid vc]
+createPCs :: [Id] -> Doc
+createPCs pss = declareConsts [ Bind (pcName ps) pcType | ps <- pss ]
+
+createSMTQuery :: [Binder]      -- binders defined in the program
+               -> [Id]          -- names of the symmetric sets
+               -> Prop a        -- verification condition
+               -> String        -- Output in SMT2 input format
+createSMTQuery bs pss vc =
+  render $ vcat $ prelude : declareConsts bs : createPCs pss : [checkValid vc]

@@ -395,9 +395,11 @@ firstOf :: Stmt (a, Int) -> [Int]
 firstOf (If _ s1 s2 _) = firstOf s1 ++ firstOf s2
 firstOf stmt           = [ getStmtLoc stmt ]
 
+-- pc "ps" "p" ==> (Select pc!ps p)
 pc :: Id -> Id -> Expr a
 pc ps p = Select (Var (pcName ps)) (Var p)
 
+-- pc' "ps" "p" ==> (Select pcNext!ps p)
 pc' :: Id -> Id -> Expr a
 pc' ps p = Select (Var (pcName' ps)) (Var p)
 
@@ -405,7 +407,10 @@ pcName :: Id -> Id
 pcName ps = "pc!" ++ ps
 
 pcName' :: Id -> Id
-pcName' ps = "pc'!" ++ ps
+pcName' ps = "pcNext!" ++ ps
+
+pcType :: Sort
+pcType = Map IntIdx Int
 
 writes :: Stmt a -> [Binder]
 writes = nub . go
