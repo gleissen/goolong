@@ -40,6 +40,8 @@ library:
   - -fwarn-orphans 
   - -fforce-recomp
   - -Werror
+  - -fprof-auto 
+  - -fprof-auto-calls
 
 executables:
   vcgen:
@@ -63,6 +65,8 @@ executables:
     - -fwarn-orphans 
     - -fforce-recomp
     - -Werror
+    - -fprof-auto 
+    - -fprof-auto-calls
     dependencies:
     - vcgen
 

@@ -1,4 +1,6 @@
-module Language.IceT.SMT where
+module Language.IceT.SMT ( smt
+                         , createSMTQuery
+                         ) where
 
 import Language.IceT.Types
 import Text.PrettyPrint.HughesPJ
@@ -86,3 +88,12 @@ prelude = vcat $ text <$> ls
 
 checkValid :: Prop a -> Doc
 checkValid f = parens (text "assert" <+> smt (Not f)) $+$ text "(check-sat)"
+
+declareConsts :: [Binder] -> Doc
+declareConsts bs =
+  vcat $ [ parens (text "declare-const" <+> text x <+> smt s)
+         | (Bind x s) <- bs
+         ]
+
+createSMTQuery :: [Binder] -> Prop a -> String
+createSMTQuery bs vc = render $ vcat $ prelude : declareConsts bs : [checkValid vc]

@@ -20,7 +20,7 @@ import qualified Data.IntSet                       as IS
 import           Data.List (foldl')
 import           Text.Printf
 
-import Debug.Trace
+-- import Debug.Trace
 
 data ActionResult a = ActionResult { arMap    :: ActionMap a
                                    , arPC0    :: Int
@@ -124,14 +124,17 @@ atomize c parStatement = (atomizeResult, freshCounter st')
              else go s
       ss' <- partitionStmts ss
       return $ case ss' of
-                 []   -> [[s']]
-                 l:ls -> if   canMerge (head l)
-                         then (s':l):ls
-                         else [[s']] ++ ss'
+                 []    -> [[s']]
+                 []:ls -> error "partitionStmts returned an empty list"
+                 (l@(lh:_)):ls ->
+                   if   canMerge lh
+                   then (s':l):ls
+                   else [[s']] ++ ss'
 
     ------------------------------------------------------------
     mergeStmts :: [Stmt a] -> ActionGen a (Stmt a)
     ------------------------------------------------------------
+    mergeStmts [] = error "mergeStmts is called with an empty list"
     mergeStmts [s]
       | isSimple s = do
           l <- incrCounter
@@ -149,10 +152,10 @@ atomize c parStatement = (atomizeResult, freshCounter st')
           return result
       | otherwise  = return s
                      
-    mergeStmts ss = do
+    mergeStmts ss@(ss1:_) = do
       l <- incrCounter
       let (ps, ss') = mergeHelper ss
-          a         = stmtData $ head ss
+          a         = stmtData ss1
           seq'      = Seq { seqStmts = ss'
                           , stmtData = a
                           }
@@ -213,42 +216,40 @@ atomize c parStatement = (atomizeResult, freshCounter st')
 -- 3. last program location (l_exit)
 -- 4. control flow graph
 --------------------------------------------------------------------------------
-extractCFG :: VCAnnot a => Int -> Stmt a -> ActionResult a
+extractCFG :: (Show a, VCAnnot a) => Int -> Stmt a -> ActionResult a
 --------------------------------------------------------------------------------
-extractCFG initCounter stmt = ActionResult { arMap    = createActionMap stmt'
+extractCFG initCounter stmt = ActionResult { arMap    = createActionMap atomizedStmt
                                            , arPC0    = pc0
                                            , arPCExit = pcExit
                                            , arCFG    = g
                                            }
   where
     pc0 = initCounter
-    (_stmt', pcExit) = atomize (pc0 + 1) stmt
-    stmt' = trace (pretty _stmt') _stmt'
-    g = actions (pc0, pcExit) stmt'
+    (atomizedStmt, pcExit) = atomize (pc0 + 1) stmt
+    -- atomizedStmt = trace (pretty _atomizedStmt) _atomizedStmt
 
---------------------------------------------------------------------------------
--- Given the l_0 and l_exit labels, and a statement, creates a control flow graph
--- of atomic actions
---------------------------------------------------------------------------------
-actions :: VCAnnot a => (Int, Int) -> Stmt a -> CFG
---------------------------------------------------------------------------------
-actions (pc0, pcExit) stmt = G.mkUGraph nodes edges
-  where
+    g :: CFG
+    g = G.mkUGraph nodes edges
+
     nodes = IS.toList $
             foldl' (\s (n1,n2) -> IS.insert n1 (IS.insert n2 s)) IS.empty edges
-    edges = go stmt ++
-            [ (pc0, stmtPC p)   | p <- firstStmt stmt ] ++
-            [ (stmtPC p,pcExit) | p <- lastStmt stmt ]
+    edges = go atomizedStmt ++
+            [ (pc0, stmtPC p)   | p <- firstStmt atomizedStmt ] ++
+            [ (stmtPC p,pcExit) | p <- lastStmt atomizedStmt ]
 
+    -- returns the CF edges within a statement
+    go :: (Show a, VCAnnot a) => Stmt a -> [(Int, Int)]
     go (Seq {..}) = case seqStmts of
-                      []   -> []
-                      s:ss -> let s' = Seq { seqStmts = ss, ..}
-                              in go s ++
-                                 go s' ++
-                                 [ (stmtPC p1, stmtPC p2)
-                                 | p1 <- lastStmt s
-                                 , p2 <- firstStmt s'
-                                 ]
+                      []       -> []
+                      [s]      -> go s
+                      s1:s2:ss ->
+                        let s' = Seq { seqStmts = s2:ss, ..}
+                        in go s1 ++
+                           go s' ++
+                           [ (stmtPC p1, stmtPC p2)
+                           | p1 <- lastStmt s1
+                           , p2 <- firstStmt s'
+                           ]
     go (ForEach {..}) = go forStmt ++
                         [ (stmtPC p1, stmtPC p2)
                         | p1 <- lastStmt forStmt
@@ -260,13 +261,13 @@ actions (pc0, pcExit) stmt = G.mkUGraph nodes edges
                       , p2 <- firstStmt whileStmt
                       ]
     go (If {..})      = go thenStmt ++ go elseStmt
-    go (Cases {..})   = caseStmt <$> caseList >>= go
+    go (Cases {..})   = (caseStmt <$> caseList) >>= go
     go (Atomic  {..}) = []
-    go (Par     {..}) = error "actions called with a parallel composition !"
-    go (Skip    {..}) = error "actions called with a skip !"
-    go (Assert  {..}) = error "actions called with a assert !"
-    go (Assume  {..}) = error "actions called with a assume !"
-    go (Assign  {..}) = error "actions called with a assign !"
+    go s@(Par     {..}) = error $ printf "extractCFG.go is called with a parallel composition !\n%s" (pretty s)
+    go s@(Skip    {..}) = error $ printf "extractCFG.go is called with a skip !\n%s" (pretty s)
+    go s@(Assert  {..}) = error $ printf "extractCFG.go is called with a assert !\n%s" (pretty s)
+    go s@(Assume  {..}) = error $ printf "extractCFG.go is called with a assume !\n%s" (pretty s)
+    go s@(Assign  {..}) = error $ printf "extractCFG.go is called with a assign !\n%s" (pretty s)
 
 -- Returns the first statement(s) of a langugage construct, or the statement itself
 firstStmt :: Show a => Stmt a -> [Stmt a]
@@ -275,13 +276,10 @@ firstStmt s@(ForEach {..}) = firstStmt forStmt
 firstStmt s@(While   {..}) = firstStmt whileStmt
 firstStmt s@(If      {..}) = firstStmt thenStmt ++ firstStmt elseStmt
 firstStmt s@(Cases   {..}) = firstStmt =<< (caseStmt <$> caseList)
-firstStmt s@(Seq     {..}) = go seqStmts
-  where
-    go []      = []
-    go (s2:ss) = case firstStmt s2 of
-                   [] -> go ss
-                   l  -> l
-firstStmt s = error $ printf "firstStmt called with %s" (show s)
+firstStmt s@(Seq     {..}) = case seqStmts of
+                               []   -> error "firstStmt is called with an empty sequence"
+                               s1:_ -> firstStmt s1
+firstStmt s                = error $ printf "firstStmt called with %s" (show s)
 
 -- Returns the last statement(s) of a langugage construct, or the statement itself
 lastStmt :: Show a => Stmt a -> [Stmt a]
@@ -290,21 +288,18 @@ lastStmt s@(ForEach {..}) = lastStmt forStmt
 lastStmt s@(While   {..}) = lastStmt whileStmt
 lastStmt s@(If      {..}) = lastStmt thenStmt ++ lastStmt elseStmt
 lastStmt s@(Cases   {..}) = lastStmt =<< (caseStmt <$> caseList)
-lastStmt s@(Seq     {..}) = go (reverse seqStmts)
-  where
-    go []      = []
-    go (s2:ss) = case lastStmt s2 of
-                   [] -> go ss
-                   l  -> l
-lastStmt s = error $ printf "firstStmt called with %s" (show s)
+lastStmt s@(Seq     {..}) = case seqStmts of
+                              [] -> error "lastStmt is called with an empty sequence"
+                              _  -> lastStmt $ last seqStmts
+lastStmt s                = error $ printf "firstStmt called with %s" (show s)
 
 -- creates a map from labeled statements
-createActionMap :: Stmt a -> ActionMap a
+createActionMap :: Show a => Stmt a -> ActionMap a
 createActionMap = go IM.empty
   where
     go m s =
       case s of
-        Atomic  {..} -> m'
+        Atomic  {..} -> IM.insert atomicLabel s m
         ForEach {..} -> go m forStmt
         While   {..} -> go m whileStmt
         If      {..} -> gos [thenStmt, elseStmt]
@@ -312,9 +307,7 @@ createActionMap = go IM.empty
         Seq     {..} -> gos seqStmts
         _            -> error $ printf "createActionMap.go called with sth other than expected !"
       where
-        s_pc   = stmtPC s
-        m'     = IM.insert s_pc s m
-        gos ss = foldl' go m' ss
+        gos ss = foldl' go m ss
 
 -- merge stmt sequences
 -- e.g. : (s1;s2);(s3;s4) becomes (s1;s2;s3;s4)
@@ -355,9 +348,9 @@ flattenSeq s = case go s of
                               , ..
                               } : []
 
-stmtPC :: Stmt a -> Int
+stmtPC :: Show a => Stmt a -> Int
 stmtPC (Atomic {..}) = atomicLabel
-stmtPC _             = error "stmtPC called with non-atomic value !"
+stmtPC s             = error $ printf "stmtPC called with non-atomic value [[[%s]]] !" (pretty s)
 
 incrCounter :: ActionGen a Int
 incrCounter = do

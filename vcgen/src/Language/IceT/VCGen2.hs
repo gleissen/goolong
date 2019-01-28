@@ -6,7 +6,6 @@
 module Language.IceT.VCGen2 (verifyFile, verifyProgram) where
 
 import           Language.IceT.Parse (parseFile, parseString, ParsedProgram)
--- import           Language.IceT.Pretty
 import           Language.IceT.SMT
 import           Language.IceT.Types hiding (CFG)
 import           Language.IceT.Action
@@ -20,10 +19,9 @@ import           GHC.IO.Handle
 import           System.Exit
 import           System.IO
 import           System.Process
-import           Text.PrettyPrint.HughesPJ
 import           Text.Printf
 
-import Debug.Trace
+-- import Debug.Trace
 
 data VCState a = VCState { freshCounter      :: Int
                          , typeEnv           :: HM.HashMap Id Sort
@@ -59,7 +57,7 @@ verify (Program{..}) = do
     ExitFailure _ -> return False
 
   where
-    vcstr = render $ vcat $ prelude : fmap smt decls' ++ [checkValid vc]
+    vcstr = createSMTQuery decls' vc
                           
     (vc, lastState) = runState action initialState
     initialState = VCState { freshCounter      = 0
@@ -72,6 +70,7 @@ verify (Program{..}) = do
 -------------------------------------------------------------------------------
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
 -------------------------------------------------------------------------------
+wlp (Skip {..}) q = return q
 wlp (Assign {assignExpr = NonDetValue, ..}) q = do
   v' <- freshBinder assignVar
   wlp (Assign { assignExpr = Var (bvar v'), ..}) q
@@ -147,6 +146,8 @@ wlp (ForEach {..}) q = do
     (done, inv) = forInvariant
     y           = forElement : Bind done Set : updatedVars forStmt
 
+wlp (While {..}) q = undefined
+
 wlp (Par {..}) q = do
   VCState{..} <- get
   let ActionResult{ arMap    = m
@@ -154,7 +155,6 @@ wlp (Par {..}) q = do
                   , arPC0    = pc0
                   , arPCExit = pcExit
                   } = extractCFG freshCounter parStmt
-  traceM (show m)
   put VCState { freshCounter = pcExit + 1 , .. }
   let i = Forall [Bind stmtProcess Int] $
           And [ And [ Atom SetMem varP varPs
@@ -187,7 +187,9 @@ wlp (Par {..}) q = do
   conjunts <- mapM (\(la_pc,la) -> do
                        let stmt' = subst p varP0 (atomicStmt la)
                            q'    = subst (pcName ps) varPC' i
+                       currentState <- insertType p0 Int
                        prop <- wlp stmt' q'
+                       put currentState
                        return (la_pc, la, prop)
                    ) (IM.toList m)
   let invStep = Forall (Bind p0 Int : y) $
@@ -196,7 +198,7 @@ wlp (Par {..}) q = do
                 And [ And [i, cf l] :=>: w
                     | (l, _, w) <- conjunts
                     ]
-  return $ trace (show g) q
+  return q
 
   where
     y = Bind (pcName stmtProcessSet) Set :
@@ -210,8 +212,6 @@ wlp (Par {..}) q = do
     varP0  = Var p0
     varPC  = Var $ pcName ps
     varPC' = Var $ pcName' ps
-
-wlp _ _ = undefined
 
 -------------------------------------------------------------------------------
 -- helper functions
@@ -238,6 +238,15 @@ getType x = do
   case HM.lookup x te of
     Just t  -> return t
     Nothing -> error (printf "Unknown id: %s" x)
+
+-- inserts the type and returns the previous state
+insertType :: Id -> Sort -> VCGen a (VCState a)
+insertType v t = do
+  currentState@VCState{..} <- get
+  put VCState { typeEnv = HM.insert v t typeEnv
+              , ..
+              }
+  return currentState
 
 isSet :: Id -> VCGen a Bool
 isSet i = do
