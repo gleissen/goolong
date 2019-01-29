@@ -296,7 +296,7 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 
 		}
 		// FIXME
-		if 2*int(ho.Get()) < n.NumPeers() {
+		if 2*int(ho.Get()) > n.NumPeers() {
 
 			/*{-@pre: forall([decl(i,int)],
 			             implies(

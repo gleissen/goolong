@@ -11,7 +11,8 @@ prog(tmp,
       decl(decision,map(set(dbs),int)),
       decl(ackMsg,map(set(dbs),int)),
       decl(myVote,map(set(dbs),int)),
-      decl(dbs,set)
+      decl(dbs,set),
+      decl(c,int)
      ],
 
      ensures(and([forall([decl(i,int)],implies(and([elem(i,dbs),

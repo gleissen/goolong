@@ -22,7 +22,8 @@ import           System.IO
 import           System.Process
 import           Text.Printf
 
-import Debug.Trace
+-- import Language.IceT.Pretty
+-- import Debug.Trace
 
 type TypeEnv a = HM.HashMap Id Sort
 data VCState a = VCState { freshCounter      :: Int
@@ -83,31 +84,39 @@ wlp (Assign {assignExpr = NonDetValue, ..}) q = do
   v' <- freshBinder assignVar
   wlp (Assign { assignExpr = Var (bvar v'), ..}) q
 
+-- p.v <- p'.e where v has type t
 wlp (Assign {..}) q = do
-  let p' = assignFromProcess
-      e  = assignExpr
-  isFromSet <- isSet p'
-  let c = stmtProcess == p' || isFromSet
-  v <- case e of
-         Var y | c -> do t <- getType y
-                         check <- isIndex t p'
-                         return $ if   check
-                                  then let res = Select e (Var p')
-                                       in trace (smtS res) res
-                                  else e
-         _ -> return e
-  let pr = process stmtData
-      i  = bvar assignVar
-      s  = bsort assignVar
-  ifM (isIndex s pr)
-    (return $ subst i (Store (Var i) (Var pr) v) q)
-    (return $ subst i v q)
+  e' <- case e of
+          -- if the rhs is a variable, and it's a map
+          -- (i.e. from processes to values)
+          -- replace it with a Select
+          -- (this is probably due to parsing of pairs ...)
+          Var x -> do
+            t' <- getType x
+            case t' of
+              Map _ _ -> return $ Select e (Var p')
+              _       -> return e
+          _ -> return e
+  -- if the lhs is a map, update the map
+  -- otherwise, just replace it with the expression
+  t <- getType v
+  return $
+    case t of
+      Map _ _ -> subst v (Store (Var v) (Var p) e') q
+      _       -> subst v e' q
+  where
+    p  = stmtProcess
+    p' = assignFromProcess
+    e  = assignExpr
+    v  = bvar assignVar
 
 wlp (Assume {..}) q = return $ stmtProperty :=>: q
 
 wlp (Assert {..}) q = return $ And [stmtProperty, q]
 
-wlp (Atomic {..}) q = wlp atomicStmt q
+wlp (Atomic {..}) q = do
+  p <- wlp atomicStmt q
+  return $ And [ atomicPost, p ]
 
 wlp (Seq {..}) q = foldM f q (reverse seqStmts)
   where
@@ -146,7 +155,7 @@ wlp (ForEach {..}) q = do
       inv3 = Forall y $ (subst done exs inv) :=>: q
   return $ And [inv1, inv2, inv3]
   where
-    q'          = subst done (Bin SetAdd ex edone) inv
+    q'          = subst done (Bin SetAdd edone ex) inv
     edone       = Var done
     x           = bvar forElement
     xs          = bvar forList

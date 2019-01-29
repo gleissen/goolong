@@ -9,6 +9,9 @@ import           Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token    as Token
 import qualified Data.Functor.Identity                  as Identity
 
+-- import Debug.Trace
+-- import Text.Printf
+-- import Language.IceT.SMT
 {-
 Core languange:
 ---------------
@@ -216,8 +219,11 @@ assignVars = do
 matchAssign :: Id -> Id -> [Id] -> [Expr ParsedAnnot] -> Parser (Stmt ParsedAnnot)
 matchAssign p q [i] [e] = return $ Assign p (Bind i Int) q e p
 matchAssign p q is es
-  | length is == length es = return $ Seq ([Assign p (Bind i Int) q e p | i <- is | e <- es]) p
-  | otherwise              = error "matchAssign: lists have to be of equal size"
+  | length is == length es = return $ Seq ([Assign p (Bind i Int) q e p
+                                           | i <- is
+                                           , e <- es
+                                           ]) p
+  | otherwise = error "matchAssign: lists have to be of equal size"
 
 assignLHS :: Parser [String]
 assignLHS = pairNested ident 

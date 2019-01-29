@@ -19,8 +19,6 @@ import qualified Data.IntSet                       as IS
 import           Data.List (foldl')
 import           Text.Printf
 
--- import Debug.Trace
-
 data ActionResult a = ActionResult { arMap    :: ActionMap a
                                    , arPC0    :: Int
                                    , arPCExit :: Int

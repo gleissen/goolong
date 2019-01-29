@@ -111,10 +111,10 @@ data Expr a = Const Int
             | Var Id
             | PExpr (Prop a)
             | Select (Expr a) (Expr a)
-            | Store (Expr a) (Expr a) (Expr a)
+            | Store (Expr a) (Expr a) (Expr a) -- (store array index expr)
             | Size (Expr a)
             | Ite (Prop a) (Expr a) (Expr a)
-            | Bin Op (Expr a) (Expr a)
+            | Bin Op (Expr a) (Expr a) -- e.g. SetAdd set element
             deriving (Eq, Show, Functor, Foldable, Traversable)
 
 data Op = Plus
@@ -127,7 +127,7 @@ data Op = Plus
 
 data Prop a = TT
             | FF
-            | Atom Rel (Expr a) (Expr a)
+            | Atom Rel (Expr a) (Expr a) -- e.g. SetMem x xs
             | Not (Prop a)
             | And [Prop a]
             | Or [Prop a]
@@ -344,7 +344,17 @@ instance Subst Expr where
   subst _ _ (Const i)        = Const i
   subst v e var@(Var x)      = if v == x then e else var
   subst v e (Bin o e1 e2)    = Bin o (subst v e e1) (subst v e e2)
-  subst v e (Select e1 e2)   = Select (subst v e e1) (subst v e e2)
+  subst v e (Select e1 e2)   =
+    case (e1, e1') of
+      (Const _, _) -> res
+      (_, Const _) -> error $
+                      printf "calling subst with v: %s, e: %s on %s[%s]"
+                      (show v) (show e) (show e1) (show e2)
+      _ -> res
+    where
+      res = Select e1' e2'
+      e1' = subst v e e1
+      e2' = subst v e e2
   subst v e (Store e1 e2 e3) = Store (subst v e e1) (subst v e e2) (subst v e e3)
   subst _ _ EmptySet         = EmptySet
   subst v e (Size a)         = Size (subst v e a)
