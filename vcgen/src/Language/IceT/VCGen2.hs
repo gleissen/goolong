@@ -25,7 +25,7 @@ import           System.Process
 import           Text.Printf
 
 import Language.IceT.Pretty
-import Debug.Trace
+-- import Debug.Trace
 
 
 
@@ -40,7 +40,7 @@ import Debug.Trace
 type TypeEnv a = HM.HashMap Id Sort
 data VCState a = VCState { freshCounter       :: Int
                          , typeEnv            :: TypeEnv a
-                         , unfoldedProcesses  :: HM.HashMap Id Id -- p -> ps
+                         , unfoldedProcesses  :: UF               -- p -> ps
                          , parallelProcesses  :: HS.HashSet Id    -- symmetric sets we have seen so far
 
                          , actionMap          :: ActionMap a   -- map from action labels to actions
@@ -51,6 +51,7 @@ data VCState a = VCState { freshCounter       :: Int
                          }
 
 type VCGen a r = State (VCState a) r
+type UF = HM.HashMap Id Id
 
 verifyProgram :: String -> IO Bool
 verifyProgram = verify . parseString
@@ -186,8 +187,6 @@ wlp (ForEach {..}) q = do
     (done, inv) = forInvariant
     y           = forElement : Bind done Set : updatedVars forStmt
 
-wlp (While {..}) q = undefined
-
 wlp (Par {..}) q = do
   addSuccess <- addElem stmtProcess stmtProcessSet
   VCState{..} <- get
@@ -200,7 +199,7 @@ wlp (Par {..}) q = do
   put VCState { parallelProcesses = HS.insert stmtProcessSet parallelProcesses
               , ..
               }
-  traceM (pretty atomizedStmt)
+  -- traceM (pretty atomizedStmt)
   let i = Forall [Bind stmtProcess Int] $
           And [ And [ Atom SetMem varP varPs
                     , Atom Eq (pc ps p) (Const l)
@@ -235,21 +234,29 @@ wlp (Par {..}) q = do
                  ]
   conjunts <- sequence $
               (\(la_pc,la) -> do
-                  let _stmt' = subst p varP0 (atomicStmt $ actionStmt la)
-                      q'    = subst (pcName ps) varPC' i
-                      stmt' = trace (printf "[[[action %d\n%s]]]" la_pc (pretty _stmt')) _stmt'
+                  let stmt' = subst p varP0 (atomicStmt $ actionStmt la)
+                      q'     = subst (pcName ps) varPC' i
+                      -- stmt'  = trace (printf "[[[action %d\n%s]]]" la_pc (pretty _stmt')) _stmt'
+                      uf     = actionUnfolding la
                   c <- addElem p ps
                   c0 <- addElem p0 ps
-                  prop <- wlp stmt' q'
+
+                  prop <- withUnfolding uf (wlp stmt' q')
+
                   when c $ removeElem p ps
                   when c0 $ removeElem p0 ps
+
                   return (la_pc, la, prop)
               ) <$> (IM.toList m)
-  let invStep = Forall (Bind p0 Int : y) $
+  let idxs = HS.fromList [ pp
+                         | (_,la) <- IM.toList m
+                         , (pp,_) <- HM.toList $ actionUnfolding la
+                         ]
+  let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
                 Atom SetMem varP0 varPs
                 :=>:
-                And [ And [i, cf l] :=>: w
-                    | (l, _, w) <- conjunts
+                And [ And ([i, cf l] ++ actionPath la)  :=>: w
+                    | (l, la, w) <- conjunts
                     ]
   when addSuccess $ removeElem stmtProcess stmtProcessSet
   return $ And [ invInit
@@ -269,6 +276,26 @@ wlp (Par {..}) q = do
     varP0  = Var p0
     varPC  = Var $ pcName ps
     varPC' = Var $ pcName' ps
+
+    withUnfolding :: UF -> VCGen a r -> VCGen a r
+    withUnfolding uf act = do
+      oldUnfoldings <- gets unfoldedProcesses
+      oldTypeEnv    <- gets typeEnv
+      modify $ \VCState{..} -> VCState{ unfoldedProcesses = HM.union oldUnfoldings uf
+                                      , typeEnv           = HM.union oldTypeEnv (HM.map (const Int) uf)
+                                      , ..
+                                      }
+      result <- act
+      modify $ \VCState{..} -> VCState{ unfoldedProcesses = oldUnfoldings
+                                      , typeEnv           = oldTypeEnv
+                                      , ..
+                                      }
+      return result
+
+wlp (While {..}) q = undefined
+
+
+
 
 
 
@@ -301,6 +328,7 @@ type CFG           = UGr
 -- Merge local statements together to create a program consists of only atomic
 -- actions to be used for generating the verification conditions for the
 -- parallel case.
+-- This stateful computation only increments the fresh counter variable.
 --------------------------------------------------------------------------------
 atomize :: Stmt a -> VCGen a (Stmt a)
 --------------------------------------------------------------------------------
@@ -482,8 +510,7 @@ extractCFG ps stmt = do
   atomizedStmt0 <- atomize stmt
   pcExit <- incrCounter
   let atomizedStmt = replaceHere ps atomizedStmt0
-      g :: CFG
-      g = G.mkUGraph nodes edges
+      g = G.mkUGraph nodes edges :: CFG
       nodes = IS.toList $
               foldl' (\s (n1,n2) -> IS.insert n1 (IS.insert n2 s)) IS.empty edges
       edges = go atomizedStmt ++
@@ -585,6 +612,7 @@ createActionMap rootStmt = do
                                    , actionPath      = actionStatePath
                                    , actionUnfolding = unfoldedProcesses
                                    }
+                        -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
                     in VCState{ actionMap = IM.insert atomicLabel a actionMap
                               , actionProp = newProp
                               , ..
@@ -595,6 +623,7 @@ createActionMap rootStmt = do
                                    , actionPath      = actionStatePath
                                    , actionUnfolding = unfoldedProcesses
                                    }
+                        -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
                     in VCState{ actionMap = IM.insert atomicLabel a actionMap
                               , ..
                               }
@@ -805,7 +834,8 @@ addElem p ps = do
                     , typeEnv           = HM.insert p Int typeEnv
                     , ..
                     }
-      return $ trace msg True
+      -- return $ trace msg True
+      return True
     (Just ps', Just sort) ->
       if   ps' == ps && sort == Int
       then return False
@@ -824,7 +854,8 @@ removeElem p ps = do
                         , typeEnv           = HM.delete p typeEnv
                         , ..
                         }
-      put $ trace msg st'
+      -- put $ trace msg st'
+      put st'
     _ -> error $ printf "%s does not exist in unfoldedProcesses or typeEnv !!!" p
   where
     msg :: String
