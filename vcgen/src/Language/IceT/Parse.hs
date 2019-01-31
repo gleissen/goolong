@@ -220,8 +220,7 @@ matchAssign :: Id -> Id -> [Id] -> [Expr ParsedAnnot] -> Parser (Stmt ParsedAnno
 matchAssign p q [i] [e] = return $ Assign p (Bind i Int) q e p
 matchAssign p q is es
   | length is == length es = return $ Seq ([Assign p (Bind i Int) q e p
-                                           | i <- is
-                                           , e <- es
+                                           | (i, e) <- zip is es
                                            ]) p
   | otherwise = error "matchAssign: lists have to be of equal size"
 

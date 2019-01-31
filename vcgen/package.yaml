@@ -19,9 +19,11 @@ dependencies:
 - parsec
 - process
 - containers
-- liquid-fixpoint
+# - liquid-fixpoint
 - unordered-containers
 - fgl
+- hspec
+- hspec-core
 
 library:
   source-dirs: src
@@ -44,7 +46,7 @@ library:
   - -fprof-auto-calls
 
 executables:
-  vcgen:
+  vcgen-exe:
     main: Main.hs
     source-dirs: app
     ghc-options:
@@ -70,3 +72,11 @@ executables:
     dependencies:
     - vcgen
 
+tests:
+  vcgen-test:
+    main:         Spec.hs
+    source-dirs:  test
+    dependencies: 
+    - vcgen
+    - hspec
+    - hspec-core

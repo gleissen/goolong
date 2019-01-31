@@ -68,6 +68,7 @@ instance SMT Rel where
   smt Gt     = text ">"
   smt Le     = text "<="
   smt SetMem = text "set_mem"
+  smt SetSub = text "set_sub"
 
 prelude :: Doc
 prelude = vcat $ text <$> ls

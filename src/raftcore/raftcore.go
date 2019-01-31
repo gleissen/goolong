@@ -130,7 +130,7 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 			count.Assign(count.Get() + 1)
 		}
 		// Updating ghost variables; these have no runtime behavior
-		if vote.Get() == 1 && votedFor.Get() == n.MyId() && term.Get() == myTerm.Get() {
+		if vote.Get() == 1 && votedFor.Get() == n.MyId() && term.Get() >= myTerm.Get() {
 			l.Assign(l.Get() + 1)
 			k.Assign(k.Get() - 1)
 		}
@@ -169,6 +169,19 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 					ref(term,i))=i,
 					ref(ref(votes,f0),
 					ref(term,j))=j
+		 			])
+		 	 )
+	 )
+	-@}*/
+
+	/*{-@ assume:
+			forall([decl(i,int)],
+		 		implies(
+					and([
+						elem(i,cs)
+						]),
+				and([
+					ref(count, i) =< ref(l, i)
 		 			])
 		 	 )
 	 )

@@ -207,7 +207,7 @@ prog(tmp,
                                                           assign(A,l,ref(l,A) - 1)]),
                                                      skip)]))])),
 
-                            ite(A,2*ref(ho,A) < card(as),
+                            ite(A,2*ref(ho,A) > card(as),
                                 seq([pre(A,forall([decl(i,int)],
                                                   implies(and([elem(i,ps),
                                                                here(i)]),

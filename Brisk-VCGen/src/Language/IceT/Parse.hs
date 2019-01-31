@@ -199,8 +199,10 @@ assignVars = do
 matchAssign p q [i] [e]
   = return $ Assign p (Bind i Int) q e p
 matchAssign p q is es
-  | length is == length es
-  = return $ Seq ([Assign p (Bind i Int) q e p | i <- is | e <- es]) p
+  | length is == length es = return $ Seq ([Assign p (Bind i Int) q e p
+                                           | (i, e) <- zip is es
+                                           ]) p
+  | otherwise = error "matchAssign: lists have to be of equal size"
 assignLHS = pairNested ident 
 assignRHS = pairNested expr
 

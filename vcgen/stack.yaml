@@ -2,7 +2,7 @@ resolver: lts-12.2
 
 packages:
 - .
-- './liquid-fixpoint'
+# - './liquid-fixpoint'
 
 extra-deps:
 - dotgen-0.4.2

@@ -25,7 +25,7 @@ import           System.Process
 import           Text.Printf
 
 import Language.IceT.Pretty
--- import Debug.Trace
+import Debug.Trace
 
 
 
@@ -37,17 +37,17 @@ import Language.IceT.Pretty
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 
-type TypeEnv a = HM.HashMap Id Sort
-data VCState a = VCState { freshCounter       :: Int
-                         , typeEnv            :: TypeEnv a
+type TypeEnv = HM.HashMap Id Sort
+data VCState a = VCState { freshCounter       :: Int              -- used to create fresh variables
+                         , typeEnv            :: TypeEnv          -- map from variables to their types
                          , unfoldedProcesses  :: UF               -- p -> ps
                          , parallelProcesses  :: HS.HashSet Id    -- symmetric sets we have seen so far
 
-                         , actionMap          :: ActionMap a   -- map from action labels to actions
-                         , actionStatePath    :: ActionPath a  -- path conditions of the actions
-
-                         , actionInForLoop    :: Bool          -- used to check whether in for loop or not
-                         , actionProp         :: Prop a        -- used for integrating loop invariants actions
+                         -- atomic action related stuff
+                         , actionMap          :: ActionMap a    -- map from action labels to actions
+                         , actionStatePath    :: ActionPath a   -- path conditions of the actions
+                         , actionForLoop      :: Maybe (Stmt a) -- used to check whether in for loop or not
+                         , actionProp         :: Prop a         -- used for integrating loop invariants actions
                          }
 
 type VCGen a r = State (VCState a) r
@@ -62,10 +62,40 @@ verifyFile fp = do
   verify program
 
 -------------------------------------------------------------------------------
+writeSMT :: ParsedProgram -> IO ()
+-------------------------------------------------------------------------------
+writeSMT (Program{..}) = do
+  writeFile filename vcstr
+  printf "Wrote smt2 file to %s\n" filename
+
+  where
+    filename = ".query.smt2" 
+    vcstr = createSMTQuery decls' pss vc'
+
+    vc' = trace (pretty _vc') _vc'
+    _vc' = simplifyProp vc
+    -- _vc' = vc
+    (vc, lastState) = runState action initialState
+    initialState = VCState { freshCounter       = 0
+                           , typeEnv            = tenv
+                           , unfoldedProcesses  = HM.empty
+                           , parallelProcesses  = HS.empty
+                           , actionMap          = IM.empty
+                           , actionStatePath    = []
+                           , actionProp         = TT
+                           , actionForLoop      = Nothing
+                           }
+    tenv   = makeTypeEnv decls
+    decls' = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
+    action = wlp prog' ensures
+    prog'  = updateTypes tenv prog
+    pss    = HS.toList $ parallelProcesses lastState
+
+-------------------------------------------------------------------------------
 verify :: ParsedProgram -> IO Bool
 -------------------------------------------------------------------------------
-verify (Program{..}) = do
-  writeFile ".query.smt2" vcstr
+verify p = do
+  writeSMT p
 
   (inp, out, err, pid) <- runInteractiveProcess "z3" ["-smt2", ".query.smt2"] Nothing Nothing
   ec   <- waitForProcess pid
@@ -79,24 +109,6 @@ verify (Program{..}) = do
     ExitSuccess   -> return ("unsat" `isInfixOf` outp)
     ExitFailure _ -> return False
 
-  where
-    vcstr = createSMTQuery decls' pss vc
-
-    (vc, lastState) = runState action initialState
-    initialState = VCState { freshCounter       = 0
-                           , typeEnv            = tenv
-                           , unfoldedProcesses  = HM.empty
-                           , parallelProcesses  = HS.empty
-                           , actionMap          = IM.empty
-                           , actionStatePath    = []
-                           , actionProp         = TT
-                           , actionInForLoop    = False
-                           }
-    tenv   = makeTypeEnv decls
-    decls' = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
-    action = wlp prog' ensures
-    prog'  = updateTypes tenv prog
-    pss    = HS.toList $ parallelProcesses lastState
 
 -------------------------------------------------------------------------------
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
@@ -104,7 +116,7 @@ wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
 wlp (Skip {..}) q = return q
 
 wlp (Assign {assignExpr = NonDetValue, ..}) q = do
-  v' <- freshBinder assignVar
+  v' <- freshBinder assignVar -- create a fresh variable to replace the expression
   wlp (Assign { assignExpr = Var (bvar v'), ..}) q
 
 -- p.v <- p'.e where v has type t
@@ -141,9 +153,7 @@ wlp (Atomic {..}) q = do
   p <- wlp atomicStmt q
   return $ And [ atomicPost, p ]
 
-wlp (Seq {..}) q = foldM f q (reverse seqStmts)
-  where
-    f q' s = wlp s q'
+wlp (Seq {..}) q = foldM (flip wlp) q (reverse seqStmts)
 
 wlp (Cases {casesExpr = NonDetValue, ..}) q =
   And <$> (sequence $ (flip wlp q . caseStmt) <$> caseList)
@@ -164,19 +174,25 @@ wlp (If {..}) q = do
                                     ]
   return (g q1 q2)
 
-wlp (ForEach {..}) q = do
-  addSuccess <- addElem x xs
+wlp stmt@(ForEach {..}) q = do
+  addSuccess <- addElem x xs    -- update the state to include the unfolding (x \in xs)
   pre <- wlp forStmt q'
-  let inv1 = subst done EmptySet inv
-      inv2 = Forall y $
-             And [ inv
-                 , Atom SetMem ex exs
-                 , Not $ Atom SetMem ex edone
-                 ] :=>:
-             pre
-      inv3 = Forall y $ (subst done exs inv) :=>: q
+  let invInit = subst done EmptySet inv -- invariant holds when done = empty
+      -- if invariant holds for done, then it holds for done U {x} after executing the loop
+      invStep = Forall y $              
+                And [ inv
+                    , Atom SetMem ex exs
+                    , Not $ Atom SetMem ex edone
+                    , Atom SetSub edone exs
+                    ] :=>:
+                pre
+      invExit = Forall y $ (subst done exs inv) :=>: q -- invariant holds when done = xs
   when addSuccess $ removeElem x xs
-  return $ And [inv1, inv2, inv3]
+  return $ And [ invInit
+               , invStep
+               , invExit
+               ]
+
   where
     q'          = subst done (Bin SetAdd edone ex) inv
     edone       = Var done
@@ -185,7 +201,7 @@ wlp (ForEach {..}) q = do
     ex          = Var x
     exs         = Var xs
     (done, inv) = forInvariant
-    y           = forElement : Bind done Set : updatedVars forStmt
+    y           = updatedVars stmt
 
 wlp (Par {..}) q = do
   addSuccess <- addElem stmtProcess stmtProcessSet
@@ -199,7 +215,7 @@ wlp (Par {..}) q = do
   put VCState { parallelProcesses = HS.insert stmtProcessSet parallelProcesses
               , ..
               }
-  -- traceM (pretty atomizedStmt)
+  traceM (pretty atomizedStmt)
   let i = Forall [Bind stmtProcess Int] $
           And [ And [ Atom SetMem varP varPs
                     , Atom Eq (pc ps p) (Const l)
@@ -241,7 +257,7 @@ wlp (Par {..}) q = do
                   c <- addElem p ps
                   c0 <- addElem p0 ps
 
-                  prop <- withUnfolding uf (wlp stmt' q')
+                  prop <- withActionState la (wlp stmt' q')
 
                   when c $ removeElem p ps
                   when c0 $ removeElem p0 ps
@@ -255,7 +271,10 @@ wlp (Par {..}) q = do
   let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
                 Atom SetMem varP0 varPs
                 :=>:
-                And [ And ([i, cf l] ++ actionPath la)  :=>: w
+                And [ And ([ i
+                           , cf l
+                           , Atom SetMem varP0 varPs
+                           ] ++ actionPath la)  :=>: w
                     | (l, la, w) <- conjunts
                     ]
   when addSuccess $ removeElem stmtProcess stmtProcessSet
@@ -268,7 +287,7 @@ wlp (Par {..}) q = do
     y = Bind (pcName stmtProcessSet) pcType :
         Bind (pcName' stmtProcessSet) pcType :
         updatedVars parStmt
-    p0 = stmtProcess ++ "0"
+    p0 = stmtProcess ++ "!0"
     p  = stmtProcess
     ps = stmtProcessSet
     varP   = Var p
@@ -277,12 +296,15 @@ wlp (Par {..}) q = do
     varPC  = Var $ pcName ps
     varPC' = Var $ pcName' ps
 
-    withUnfolding :: UF -> VCGen a r -> VCGen a r
-    withUnfolding uf act = do
+    withActionState :: Action a -> VCGen a r -> VCGen a r
+    withActionState la act = do
+      let uf = actionUnfolding la
+          te = actionTypeEnv la
       oldUnfoldings <- gets unfoldedProcesses
       oldTypeEnv    <- gets typeEnv
       modify $ \VCState{..} -> VCState{ unfoldedProcesses = HM.union oldUnfoldings uf
-                                      , typeEnv           = HM.union oldTypeEnv (HM.map (const Int) uf)
+                                      , typeEnv           = HM.union oldTypeEnv
+                                                            (HM.union (HM.map (const Int) uf) te)
                                       , ..
                                       }
       result <- act
@@ -307,9 +329,10 @@ wlp (While {..}) q = undefined
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 
-data Action a = Action { actionStmt      :: Stmt a        -- this is the atomic action
-                       , actionPath      :: ActionPath a  -- path condition (i.e. if stmt conditions)
-                       , actionUnfolding :: HM.HashMap Id Id
+data Action a = Action { actionStmt        :: Stmt a        -- this is the atomic action
+                       , actionPath        :: ActionPath a  -- path condition (i.e. if stmt conditions)
+                       , actionUnfolding   :: HM.HashMap Id Id
+                       , actionTypeEnv     :: TypeEnv
                        }
 
 data ActionResult a = ActionResult { arMap    :: ActionMap a
@@ -592,56 +615,77 @@ createActionMap rootStmt = do
   where
     cleanup :: VCAnnot a => VCGen a ()
     cleanup = modify $
-      \VCState {..} -> VCState { actionMap          = IM.empty
-                               , actionStatePath    = []
-                               , actionProp         = TT
+      \VCState {..} -> VCState { actionMap       = IM.empty
+                               , actionStatePath = []
+                               , actionForLoop   = Nothing
+                               , actionProp      = TT
                                , ..
                                }
 
     go :: VCAnnot a => Stmt a -> VCGen a ()
     go (Atomic{..}) = do
-      inLoop <- gets actionInForLoop
-      if inLoop
-        then do oldProp <- gets actionProp
-                newProp <- wlp atomicStmt oldProp
-                modify $
-                  \VCState{..} ->
-                    let a = Action { actionStmt      = Atomic { atomicPost = And [atomicPost, oldProp]
-                                                              , ..
-                                                              }
-                                   , actionPath      = actionStatePath
-                                   , actionUnfolding = unfoldedProcesses
-                                   }
-                        -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
-                    in VCState{ actionMap = IM.insert atomicLabel a actionMap
-                              , actionProp = newProp
-                              , ..
-                              }
-        else do modify $
-                  \VCState{..} ->
-                    let a = Action { actionStmt      = Atomic {..}
-                                   , actionPath      = actionStatePath
-                                   , actionUnfolding = unfoldedProcesses
-                                   }
-                        -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
-                    in VCState{ actionMap = IM.insert atomicLabel a actionMap
-                              , ..
-                              }
+      maybeLoop <- gets actionForLoop
+      case maybeLoop of
+        Just forLoop -> do
+          let x  = forElement forLoop
+              xs = forList forLoop
+              d  = fst $ forInvariant forLoop
+              w  = updatedVars $ forStmt forLoop
+              y  = x : Bind d Set : [] -- : w
+          oldProp <- gets actionProp
+          newProp <- wlp atomicStmt oldProp
+          traceM $ printf "[%d] oldProp: %s, newProp: %s" atomicLabel (smtS oldProp) (smtS newProp)
+          modify $
+            \VCState{..} ->
+              let newProp' = And ( -- Atom SetMem (Var $ bvar x) (Var d) :
+                                   [ Atom SetMem (Var p) (Var ps)
+                                   | (p,ps) <- HM.toList unfoldedProcesses
+                                   ]
+                                 ) :=>: newProp
+                  atomicPost' = Forall y $ And [atomicPost, newProp']
+                  a = Action { actionStmt      = Atomic { atomicPost = atomicPost'
+                                                        , ..
+                                                        }
+                             , actionPath      = actionStatePath
+                             , actionUnfolding = unfoldedProcesses
+                             , actionTypeEnv   = typeEnv
+                             }
+                  -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
+              in VCState{ actionMap = IM.insert atomicLabel a actionMap
+                        , actionProp = newProp'
+                        , ..
+                        }
+        Nothing -> do
+          modify $
+            \VCState{..} ->
+              let a = Action { actionStmt      = Atomic {..}
+                             , actionPath      = actionStatePath
+                             , actionUnfolding = unfoldedProcesses
+                             , actionTypeEnv   = typeEnv
+                             }
+                  -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
+              in VCState{ actionMap = IM.insert atomicLabel a actionMap
+                        , ..
+                        }
 
-    go (ForEach{..}) = do
+    go forLoop@(ForEach{..}) = do
       let x  = bvar forElement
           xs = bvar forList
-      modify $ \VCState{..} -> VCState{ actionInForLoop = True
-                                      , actionProp      = snd $ forInvariant
+      modify $ \VCState{..} -> VCState{ actionForLoop = Just forLoop
+                                      , actionProp    = snd $ forInvariant
                                       , ..
                                       }
       c <- addElem x xs
+      d <- insertType (fst forInvariant) Set
       go forStmt
       when c $ removeElem x xs
-      modify $ \VCState{..} -> VCState{ actionInForLoop = False
-                                      , actionProp      = TT
+      when d $ removeType (fst forInvariant) Set
+      modify $ \VCState{..} -> VCState{ actionForLoop = Nothing
+                                      , actionProp    = TT
                                       , ..
                                       }
+        where
+          y = updatedVars forLoop
 
     go (Seq {..}) = sequence_ $ go <$> reverse seqStmts
 
@@ -654,13 +698,6 @@ createActionMap rootStmt = do
       modify $ \VCState{..} -> VCState{ actionStatePath = oldPath , .. }
 
     go _ = error $ printf "createActionMap.go called with sth other than expected !"
-
-    -- go s =
-    --   case s of
-        -- While   {..} -> go whileStmt
-        -- Cases   {..} -> gos $ caseStmt <$> caseList
-      -- where
-      --   gos ss = foldl' go m ss
 
 -- merge stmt sequences
 -- e.g. : (s1;s2);(s3;s4) becomes (s1;s2;s3;s4)
@@ -797,13 +834,28 @@ getType x = do
     Nothing -> error (printf "Unknown id: %s" x)
 
 -- inserts the type and returns the previous state
-insertType :: Id -> Sort -> VCGen a (VCState a)
+insertType :: Id -> Sort -> VCGen a Bool
 insertType v t = do
-  currentState@VCState{..} <- get
-  put VCState { typeEnv = HM.insert v t typeEnv
-              , ..
-              }
-  return currentState
+  VCState{..} <- get
+  case HM.lookup v typeEnv of
+    Nothing -> do put VCState { typeEnv = HM.insert v t typeEnv
+                              , ..
+                              }
+                  return True
+    Just s -> if s == t
+              then return False 
+              else error "insertType: Trying to update a var with a different type"
+
+removeType :: Id -> Sort -> VCGen a ()
+removeType v t = do
+  VCState{..} <- get
+  case HM.lookup v typeEnv of
+    Just s -> if s == t
+              then put VCState { typeEnv = HM.delete v typeEnv
+                               , ..
+                               }
+              else error "insertType: Trying to delete a var with a different existing type"
+    Nothing -> error "insertType: Trying to delete missing var"
 
 isSet :: Id -> VCGen a Bool
 isSet i = do
@@ -869,7 +921,7 @@ updatedVars = nub . go
     go (Atomic {..})  = go atomicStmt
     go (Assign {..})  = [assignVar]
     go (Seq {..})     = seqStmts >>= go
-    go (ForEach {..}) = forElement : go forStmt
+    go (ForEach {..}) = forElement : Bind (fst forInvariant) Set : go forStmt
     go (While {..})   = go whileStmt
     go (Cases {..})   = caseList >>= go . caseStmt
     go (Par {..})     = go parStmt
@@ -881,7 +933,7 @@ makeTypeEnv bs = HM.fromList [ (x,t) | Bind x t <- bs ]
 
 -- some variables are parsed with the default type (i.e. Int)
 -- update the binds with the correct ones from the type environment
-updateTypes :: TypeEnv a -> Stmt a -> Stmt a
+updateTypes :: TypeEnv -> Stmt a -> Stmt a
 updateTypes tenv s = go s
   where
     go (Skip {..})    = Skip {..}
@@ -921,3 +973,4 @@ updateTypes tenv s = go s
       case HM.lookup v tenv of
         Nothing   -> b
         Just sort -> Bind v sort
+

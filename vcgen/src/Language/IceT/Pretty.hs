@@ -23,11 +23,11 @@ instance Pretty (Stmt a) where
   pp (Par x xs _ s _)      = text "proctype" <+> text xs <> parens (text x) <> colon $+$ nest 2 (pp s)
   pp (Assign p b q e _)    = pp b <+> text ":=" <+> pp e <> semi <+> text "//" <+> text p <+> text "<-" <+> text q
   pp (Seq stmts s)         = vcat (pp <$> stmts)
-  pp (Atomic {..})         = text "<" <+>
-                             text "atomic" <> brackets (int atomicLabel) <+>
-                             pp atomicPost <+> text "::"
-                             <+> pp atomicStmt <+> text ">"
-                             <> semi
+  pp (Atomic {..})         = text "<" <+> text "atomic" <> brackets (int atomicLabel) <+>
+                             vcat [ pp atomicPost <+> text "::"
+                                  , pp atomicStmt
+                                  ] <+>
+                             text ">" <> semi
   pp (Assume p _)          = text "assume" <+> pp p
   pp (Assert p _ _)        = text "assert" <+> pp p
   pp (If p s1 s2 _)        = text "if" <+> parens (pp p) $+$ nest 2 (pp s1) $+$ text "else" $+$ (nest 2 (pp s2))
@@ -72,6 +72,7 @@ instance Pretty Rel where
   pp Lt     = text "<"
   pp Gt     = text ">"
   pp SetMem = text "∈"
+  pp SetSub = text "⊆"
 
 instance Pretty (Expr a) where
   pp (Const i)        = int i
