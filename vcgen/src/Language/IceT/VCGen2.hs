@@ -72,9 +72,8 @@ writeSMT (Program{..}) = do
     filename = ".query.smt2" 
     vcstr = createSMTQuery decls' pss vc'
 
-    vc' = trace (pretty _vc') _vc'
     _vc' = simplifyProp vc
-    -- _vc' = vc
+    vc' = trace (pretty _vc') _vc'
     (vc, lastState) = runState action initialState
     initialState = VCState { freshCounter       = 0
                            , typeEnv            = tenv
@@ -135,15 +134,23 @@ wlp (Assign {..}) q = do
   -- if the lhs is a map, update the map
   -- otherwise, just replace it with the expression
   t <- getType v
+  let e'' = case t of
+              Map _ _ -> Store (Var v) (Var p) e'
+              _       -> e'
+
+  insertType v' t
+
   return $
-    case t of
-      Map _ _ -> subst v (Store (Var v) (Var p) e') q
-      _       -> subst v e' q
+    Atom Eq (Var v') e''
+    :=>:
+    subst v (Var v') q
+
   where
     p  = stmtProcess
     p' = assignFromProcess
     e  = assignExpr
     v  = bvar assignVar
+    v' = v ++ "!1"
 
 wlp (Assume {..}) q = return $ stmtProperty :=>: q
 
@@ -175,23 +182,22 @@ wlp (If {..}) q = do
   return (g q1 q2)
 
 wlp stmt@(ForEach {..}) q = do
-  addSuccess <- addElem x xs    -- update the state to include the unfolding (x \in xs)
-  pre <- wlp forStmt q'
-  let invInit = subst done EmptySet inv -- invariant holds when done = empty
-      -- if invariant holds for done, then it holds for done U {x} after executing the loop
-      invStep = Forall y $              
-                And [ inv
-                    , Atom SetMem ex exs
-                    , Not $ Atom SetMem ex edone
-                    , Atom SetSub edone exs
-                    ] :=>:
-                pre
-      invExit = Forall y $ (subst done exs inv) :=>: q -- invariant holds when done = xs
-  when addSuccess $ removeElem x xs
-  return $ And [ invInit
-               , invStep
-               , invExit
-               ]
+  withElem x xs $ do
+    pre <- wlp forStmt q'
+    let invInit = subst done EmptySet inv -- invariant holds when done = empty
+        -- if invariant holds for done, then it holds for done U {x} after executing the loop
+        invStep = Forall y $              
+                  And [ inv
+                      , Atom SetMem ex exs
+                      , Not $ Atom SetMem ex edone
+                      , Atom SetSub edone exs
+                      ] :=>:
+                  pre
+        invExit = Forall y $ (subst done exs inv) :=>: q -- invariant holds when done = xs
+    return $ And [ invInit
+                 , invStep
+                 , invExit
+                 ]
 
   where
     q'          = subst done (Bin SetAdd edone ex) inv
@@ -204,84 +210,83 @@ wlp stmt@(ForEach {..}) q = do
     y           = updatedVars stmt
 
 wlp (Par {..}) q = do
-  addSuccess <- addElem stmtProcess stmtProcessSet
-  VCState{..} <- get
-  ActionResult{ arMap    = m
-              , arCFG    = g
-              , arPC0    = pc0
-              , arPCExit = pcExit
-              , arStmt   = atomizedStmt
-              } <- extractCFG stmtProcessSet parStmt
-  put VCState { parallelProcesses = HS.insert stmtProcessSet parallelProcesses
-              , ..
-              }
-  traceM (pretty atomizedStmt)
-  let i = Forall [Bind stmtProcess Int] $
-          And [ And [ Atom SetMem varP varPs
-                    , Atom Eq (pc ps p) (Const l)
-                    ]
-                :=>:
-                let posts = [ let la' = m IM.! l'
-                              in atomicPost $ actionStmt la'
-                            | l' <- G.pre g l
-                            , l' /= pc0 && l' /= pcExit
+  withElem stmtProcess stmtProcessSet $ do
+    VCState{..} <- get
+    ActionResult{ arMap    = m
+                , arCFG    = g
+                , arPC0s   = pc0s
+                , arPCExit = pcExit
+                , arStmt   = atomizedStmt
+                } <- extractCFG stmtProcessSet parStmt
+    put VCState { parallelProcesses = HS.insert stmtProcessSet parallelProcesses
+                , ..
+                }
+    traceM (pretty atomizedStmt)
+    forM_ (IM.toList m) $ \(n, la) -> traceM (pretty $ actionStmt la)
+      
+    let _i = Forall [Bind stmtProcess Int] $
+            And [ And [ Atom SetMem varP varPs
+                      , Atom Eq (pc ps p) (Const l)
+                      ]
+                  :=>:
+                  let posts = [ if   l' == pcExit
+                                then TT
+                                else let la' = m IM.! l'
+                                     in atomicPost $ actionStmt la'
+                              | l' <- G.pre g l
+                              ]
+                  in case posts of
+                       [] -> TT
+                       _  -> Or posts
+                | (l, la) <- IM.toList m
+                ]
+        i = trace (printf "I: [[[%s]]]" (pretty $ simplifyProp _i)) _i
+        invInit = ( Forall [Bind stmtProcess Int] $
+                    And [ Atom SetMem varP varPs
+                        , Or [ Atom Eq (Select varPC varP) (Const pc0)
+                             | pc0 <- pc0s 
+                             ]
+                        ]
+                  ) :=>: i
+        invExit = Forall y $
+                  And [ Forall [Bind stmtProcess Int] $
+                        And [ Atom SetMem varP varPs
+                            , Atom Eq (Select varPC varP) (Const pcExit)
                             ]
-                in case posts of
-                     [] -> TT
-                     _  -> Or posts
-              | (l, la) <- IM.toList m
-              ]
-      invInit = ( Forall [Bind stmtProcess Int] $
-                  And [ Atom SetMem varP varPs
-                      , Atom Eq (Select varPC varP) (Const pc0)
+                      , i
+                      ] :=>: q
+        cf l = And [ Atom Eq (pc ps p) (Const l)
+                   , Or [ Atom Eq varPC' (Store varPC varP (Const l'))
+                        |  l' <- G.suc g l
+                        ]
+                   ]
+    conjunts <- sequence $
+                (\(la_pc,la) -> do
+                    let stmt' = subst p varP0 (atomicStmt $ actionStmt la)
+                        q'     = subst (pcName ps) varPC' i
+                        uf     = actionUnfolding la
+                    withElem p ps $ withElem p0 ps $ do
+                      prop <- withActionState la (wlp stmt' q')
+                      return (la_pc, la, prop)
+                ) <$> (IM.toList m)
+    let idxs = HS.fromList [ pp
+                           | (_,la) <- IM.toList m
+                           , (pp,_) <- HM.toList $ actionUnfolding la
+                           ]
+    let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
+                  Atom SetMem varP0 varPs
+                  :=>:
+                  And [ And ([ i
+                             , cf l
+                             , Atom SetMem varP0 varPs
+                             , Atom SetMem varP  varPs
+                             ] ++ actionPath la)  :=>: w
+                      | (l, la, w) <- conjunts
                       ]
-                ) :=>: i
-      invExit = Forall y $
-                And [ Forall [Bind stmtProcess Int] $
-                      And [ Atom SetMem varP varPs
-                          , Atom Eq (Select varPC varP) (Const pcExit)
-                          ]
-                    , i
-                    ] :=>: q
-      cf l = And [ Atom Eq (pc ps p) (Const l)
-                 , Or [ Atom Eq varPC' (Store varPC varP (Const l'))
-                      |  l' <- G.suc g l
-                      ]
+    return $ And [ invInit
+                 , invStep
+                 , invExit
                  ]
-  conjunts <- sequence $
-              (\(la_pc,la) -> do
-                  let stmt' = subst p varP0 (atomicStmt $ actionStmt la)
-                      q'     = subst (pcName ps) varPC' i
-                      -- stmt'  = trace (printf "[[[action %d\n%s]]]" la_pc (pretty _stmt')) _stmt'
-                      uf     = actionUnfolding la
-                  c <- addElem p ps
-                  c0 <- addElem p0 ps
-
-                  prop <- withActionState la (wlp stmt' q')
-
-                  when c $ removeElem p ps
-                  when c0 $ removeElem p0 ps
-
-                  return (la_pc, la, prop)
-              ) <$> (IM.toList m)
-  let idxs = HS.fromList [ pp
-                         | (_,la) <- IM.toList m
-                         , (pp,_) <- HM.toList $ actionUnfolding la
-                         ]
-  let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
-                Atom SetMem varP0 varPs
-                :=>:
-                And [ And ([ i
-                           , cf l
-                           , Atom SetMem varP0 varPs
-                           ] ++ actionPath la)  :=>: w
-                    | (l, la, w) <- conjunts
-                    ]
-  when addSuccess $ removeElem stmtProcess stmtProcessSet
-  return $ And [ invInit
-               , invStep
-               , invExit
-               ]
 
   where
     y = Bind (pcName stmtProcessSet) pcType :
@@ -308,8 +313,8 @@ wlp (Par {..}) q = do
                                       , ..
                                       }
       result <- act
+      -- keep the new type environment !
       modify $ \VCState{..} -> VCState{ unfoldedProcesses = oldUnfoldings
-                                      , typeEnv           = oldTypeEnv
                                       , ..
                                       }
       return result
@@ -336,7 +341,7 @@ data Action a = Action { actionStmt        :: Stmt a        -- this is the atomi
                        }
 
 data ActionResult a = ActionResult { arMap    :: ActionMap a
-                                   , arPC0    :: Int
+                                   , arPC0s   :: [Int]
                                    , arPCExit :: Int
                                    , arCFG    :: CFG
                                    , arStmt   :: Stmt a -- stmt after atomization
@@ -529,7 +534,6 @@ atomize = go
 extractCFG :: (Show a, VCAnnot a) => Id -> Stmt a -> VCGen a (ActionResult a)
 --------------------------------------------------------------------------------
 extractCFG ps stmt = do
-  pc0 <- incrCounter
   atomizedStmt0 <- atomize stmt
   pcExit <- incrCounter
   let atomizedStmt = replaceHere ps atomizedStmt0
@@ -537,11 +541,10 @@ extractCFG ps stmt = do
       nodes = IS.toList $
               foldl' (\s (n1,n2) -> IS.insert n1 (IS.insert n2 s)) IS.empty edges
       edges = go atomizedStmt ++
-              [ (pc0, stmtPC p)   | p <- firstStmt atomizedStmt ] ++
               [ (stmtPC p,pcExit) | p <- lastStmt atomizedStmt ]
   m <- createActionMap atomizedStmt
   return $ ActionResult { arMap    = m
-                        , arPC0    = pc0
+                        , arPC0s   = stmtPC <$> firstStmt atomizedStmt
                         , arPCExit = pcExit
                         , arCFG    = g
                         , arStmt   = atomizedStmt
@@ -633,17 +636,18 @@ createActionMap rootStmt = do
               w  = updatedVars $ forStmt forLoop
               y  = x : Bind d Set : [] -- : w
           oldProp <- gets actionProp
-          newProp <- wlp atomicStmt oldProp
-          traceM $ printf "[%d] oldProp: %s, newProp: %s" atomicLabel (smtS oldProp) (smtS newProp)
+          -- FIXME: enable annot stuff ?
+          -- newProp <- wlp atomicStmt oldProp
           modify $
             \VCState{..} ->
-              let newProp' = And ( -- Atom SetMem (Var $ bvar x) (Var d) :
-                                   [ Atom SetMem (Var p) (Var ps)
-                                   | (p,ps) <- HM.toList unfoldedProcesses
-                                   ]
-                                 ) :=>: newProp
-                  atomicPost' = Forall y $ And [atomicPost, newProp']
-                  a = Action { actionStmt      = Atomic { atomicPost = atomicPost'
+              -- FIXME: enable annot stuff ?
+              -- let newProp' = And [ Atom SetMem (Var p) (Var ps)
+              --                    | (p,ps) <- HM.toList unfoldedProcesses
+              --                    ] :=>: newProp
+              --     atomicPost' = Forall y $ And [atomicPost, newProp']
+              let newProp' = oldProp
+                  atomicPost' = atomicPost
+                  a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost'
                                                         , ..
                                                         }
                              , actionPath      = actionStatePath
@@ -658,7 +662,9 @@ createActionMap rootStmt = do
         Nothing -> do
           modify $
             \VCState{..} ->
-              let a = Action { actionStmt      = Atomic {..}
+              let a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost
+                                                        , ..
+                                                        }
                              , actionPath      = actionStatePath
                              , actionUnfolding = unfoldedProcesses
                              , actionTypeEnv   = typeEnv
@@ -675,11 +681,8 @@ createActionMap rootStmt = do
                                       , actionProp    = snd $ forInvariant
                                       , ..
                                       }
-      c <- addElem x xs
-      d <- insertType (fst forInvariant) Set
-      go forStmt
-      when c $ removeElem x xs
-      when d $ removeType (fst forInvariant) Set
+      withElem x xs $ withType (fst forInvariant) Set $
+        go forStmt
       modify $ \VCState{..} -> VCState{ actionForLoop = Nothing
                                       , actionProp    = TT
                                       , ..
@@ -833,29 +836,39 @@ getType x = do
     Just t  -> return t
     Nothing -> error (printf "Unknown id: %s" x)
 
--- inserts the type and returns the previous state
 insertType :: Id -> Sort -> VCGen a Bool
-insertType v t = do
-  VCState{..} <- get
-  case HM.lookup v typeEnv of
-    Nothing -> do put VCState { typeEnv = HM.insert v t typeEnv
-                              , ..
-                              }
-                  return True
-    Just s -> if s == t
-              then return False 
-              else error "insertType: Trying to update a var with a different type"
+insertType v t =
+  if v /= "_"
+    then do
+    VCState{..} <- get
+    case HM.lookup v typeEnv of
+      Nothing -> do put VCState { typeEnv = HM.insert v t typeEnv
+                                , ..
+                                }
+                    return True
+      Just s -> if s == t
+                then return False 
+                else error "insertType: Trying to update a var with a different type"
+    else
+    return False
 
-removeType :: Id -> Sort -> VCGen a ()
-removeType v t = do
-  VCState{..} <- get
-  case HM.lookup v typeEnv of
-    Just s -> if s == t
-              then put VCState { typeEnv = HM.delete v typeEnv
-                               , ..
-                               }
-              else error "insertType: Trying to delete a var with a different existing type"
-    Nothing -> error "insertType: Trying to delete missing var"
+withType :: Id -> Sort -> VCGen a r -> VCGen a r 
+withType v t act = do
+  c <- insertType v t
+  r <- act
+  when c removeType
+  return r
+  where
+    removeType :: VCGen a ()
+    removeType = do
+      VCState{..} <- get
+      case HM.lookup v typeEnv of
+        Just s -> if s == t
+                  then put VCState { typeEnv = HM.delete v typeEnv
+                                   , ..
+                                   }
+                  else error "insertType: Trying to delete a var with a different existing type"
+        Nothing -> error "insertType: Trying to delete missing var"
 
 isSet :: Id -> VCGen a Bool
 isSet i = do
@@ -876,45 +889,57 @@ isElem p ps = do
   g <- gets unfoldedProcesses
   return $ maybe False (== ps) $ HM.lookup p g
 
--- returns whether the addition was successful or not
-addElem :: Id -> Id -> VCGen a Bool
-addElem p ps = do
-  VCState{..} <- get
-  case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
-    (Nothing, Nothing) -> do
-      put $ VCState { unfoldedProcesses = HM.insert p ps unfoldedProcesses
-                    , typeEnv           = HM.insert p Int typeEnv
-                    , ..
-                    }
-      -- return $ trace msg True
-      return True
-    (Just ps', Just sort) ->
-      if   ps' == ps && sort == Int
-      then return False
-      else error $ printf "adding %s \\in %s is weird !!!" p ps
-    _ -> error $ printf "adding %s \\in %s is weird !!!" p ps
-  where
-    msg :: String
-    msg = printf "adding %s \\in %s" p ps
+withElem :: Id -> Id -> VCGen a r ->  VCGen a r
+withElem p ps act = do
+  c <- addElem
+  r <- act
+  when c removeElem
+  return r
 
-removeElem :: Id -> Id -> VCGen a ()
-removeElem p ps = do
-  VCState {..} <- get
-  case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
-    (Just _, Just _) -> do
-      let st' = VCState { unfoldedProcesses = HM.delete p unfoldedProcesses
-                        , typeEnv           = HM.delete p typeEnv
-                        , ..
-                        }
-      -- put $ trace msg st'
-      put st'
-    _ -> error $ printf "%s does not exist in unfoldedProcesses or typeEnv !!!" p
   where
-    msg :: String
-    msg = printf "removing %s \\in %s" p ps
+    -- returns whether the addition was successful or not
+    addElem :: VCGen a Bool
+    addElem = do
+      VCState{..} <- get
+      if (p /= "_")
+        then
+        case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
+          (Nothing, Nothing) -> do
+            put $ VCState { unfoldedProcesses = HM.insert p ps unfoldedProcesses
+                          , typeEnv           = HM.insert p Int typeEnv
+                          , ..
+                          }
+            -- return $ trace msg True
+            return True
+          (Just ps', Just sort) ->
+            if   ps' == ps && sort == Int
+            then return False
+            else error $ printf "adding %s \\in %s is weird !!!" p ps
+          _ -> error $ printf "adding %s \\in %s is weird !!!" p ps
+        else
+        return False
+      where
+        msg :: String
+        msg = printf "adding %s \\in %s" p ps
+    
+    removeElem :: VCGen a ()
+    removeElem = do
+      VCState {..} <- get
+      case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
+        (Just _, Just _) -> do
+          let st' = VCState { unfoldedProcesses = HM.delete p unfoldedProcesses
+                            , typeEnv           = HM.delete p typeEnv
+                            , ..
+                            }
+          -- put $ trace msg st'
+          put st'
+        _ -> error $ printf "%s does not exist in unfoldedProcesses or typeEnv !!!" p
+      where
+        msg :: String
+        msg = printf "removing %s \\in %s" p ps
 
 updatedVars :: Stmt a -> [Binder]
-updatedVars = nub . go
+updatedVars = filter (\(Bind v _) -> v /= "_") . nub . go
   where
     go (Skip {..})    = []
     go (If {..})      = go thenStmt ++ go elseStmt
@@ -974,3 +999,85 @@ updateTypes tenv s = go s
         Nothing   -> b
         Just sort -> Bind v sort
 
+
+simplifyProp :: Prop a -> Prop a
+simplifyProp (And ps) = if   elem FF ps''
+                        then FF
+                        else case ps'' of
+                               []  -> TT
+                               [p] -> p
+                               _   -> And ps''
+  where
+    ps'  = simplifyProp <$> ps
+    ps'' = filter (/= TT) ps'
+simplifyProp (Or ps) = if   elem TT ps''
+                       then TT
+                       else case ps'' of
+                              []  -> FF
+                              [p] -> p
+                              _   -> Or ps''
+  where
+    ps'  = simplifyProp <$> ps
+    ps'' = filter (/= FF) ps'
+simplifyProp (Not p) = case p' of
+                         TT     -> FF
+                         FF     -> TT
+                         Not p2 -> p2
+                         _      -> Not p'
+  where
+    p' = simplifyProp p
+simplifyProp (a :=>: b) = case (a', b') of
+                            (TT, _) -> b'
+                            (FF, _) -> TT
+                            (_, TT) -> TT
+                            (_, FF) -> Not a'
+                            _       -> a' :=>: b'
+  where
+    a' = simplifyProp a
+    b' = simplifyProp b
+simplifyProp p0@(Forall bs p) = case p'' of
+                                  TT -> TT
+                                  FF -> FF
+                                  _  -> Forall bs' p''
+  where
+    (bs', p'') = case p' of
+                   Forall bs2 p2 -> (nub $ bs ++ bs2, p2) 
+                   _             -> (bs, p')
+    p' = simplifyProp p
+simplifyProp (Exists bs p)  = Exists bs $ simplifyProp p
+simplifyProp (Let bs p)     = Let bs $ simplifyProp p
+simplifyProp (Atom r e1 e2) = Atom r (simplifyExpr e1) (simplifyExpr e2)
+simplifyProp (Here e)       = Here (simplifyExpr e)
+simplifyProp (Prop e)       = case e' of
+                                PExpr p -> p
+                                _       -> Prop e'
+  where
+    e' = simplifyExpr e
+simplifyProp TT = TT
+simplifyProp FF = FF
+simplifyProp (PVar v) = PVar v
+simplifyProp NonDetProp = NonDetProp
+
+
+simplifyExpr :: Expr a -> Expr a
+simplifyExpr = go
+  where
+    go (PExpr p)     = case p' of
+                         Prop e -> e
+                         _      -> PExpr p'
+      where
+        p' = simplifyProp p
+    go (Select a i)  = Select (go a) (go i)
+    go (Store a i e) = Store (go a) (go i) (go e)
+    go (Size e)      = Size (go e)
+    go (Ite p th el) = case p' of
+                         TT -> (go th)
+                         FF -> (go el)
+                         _  -> Ite p' (go th) (go el)
+      where
+        p' = simplifyProp p
+    go (Bin o e1 e2) = Bin o (go e1) (go e2)
+    go (Const i)     = Const i
+    go EmptySet      = EmptySet
+    go NonDetValue   = NonDetValue
+    go (Var v)       = Var v
