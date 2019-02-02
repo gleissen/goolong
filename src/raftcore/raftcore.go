@@ -87,13 +87,6 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	//    Initialization
 	// =====================
 
-	/*{-@ pre: and([
-				ref(k,C) = card(fs),
-				ref(l,C) = 0,
-				ref(count,C) = 0,
-				ref(isLeader, C) = 0])
-	-@}*/
-
 	/*{-@ assume:
 		forall([decl(i,int)],
 				and([
@@ -105,6 +98,19 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 	isLeader.Assign(0)
 	count.Assign(0)
 	term.Assign(int32(*termArg))
+
+	/*{-@ pre: 
+		forall([decl(i,int)], 
+			implies(
+				elem(i,r), 
+				and([
+					ref(k,i) = card(fs),
+					ref(l,i) = 0,
+					ref(count,i) = 0,
+					ref(isLeader, i) = 0 
+				])))
+	-@}*/
+
 
 	// =====================
 	//    Sending Proposals
@@ -123,6 +129,18 @@ func runCandidate(peerAddresses []string, termArg *int, done chan bool) {
 					 )
 			  )
 		-@}*/
+
+		/*{-@ pre:
+				forall([decl(i,int)],
+					implies(
+						and([
+							elem(i,cs),
+							ref(isLeader,i)=1
+							]),
+							card(fs)<ref(count,i)*2)
+					)
+		-@}*/
+
 		id.Assign(n.MyId())
 		n.SendPair(Peer, id, term)
 		vote = n.RecvFrom(Peer)
