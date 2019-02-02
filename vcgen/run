@@ -31,7 +31,7 @@ else
 fi
 
 ts=$(date +'%s%N')
-stack exec vcgen -- "$SEQ_FILE"
+stack exec vcgen-exe -- "$SEQ_FILE"
 vc_ec=$?
 tt=$((($(date +'%s%N') - $ts)/1000000))
 

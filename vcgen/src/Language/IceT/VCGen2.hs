@@ -72,8 +72,10 @@ writeSMT (Program{..}) = do
     filename = ".query.smt2" 
     vcstr = createSMTQuery decls' pss vc'
 
-    _vc' = simplifyProp vc
-    vc' = trace (pretty _vc') _vc'
+    vc' = simplifyProp vc
+    -- vc' = trace (pretty _vc') _vc'
+    -- vc' = vc
+
     (vc, lastState) = runState action initialState
     initialState = VCState { freshCounter       = 0
                            , typeEnv            = tenv
@@ -84,11 +86,13 @@ writeSMT (Program{..}) = do
                            , actionProp         = TT
                            , actionForLoop      = Nothing
                            }
-    tenv   = makeTypeEnv decls
-    decls' = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
-    action = wlp prog' ensures
-    prog'  = updateTypes tenv prog
-    pss    = HS.toList $ parallelProcesses lastState
+    tenv       = makeTypeEnv decls
+    decls'     = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
+    action     = wlp prog' ensures
+    preprocess = fixAtomicPost . updateTypes tenv
+    prog'     = preprocess prog
+    -- prog'      = trace (pretty _prog') _prog'
+    pss        = HS.toList $ parallelProcesses lastState
 
 -------------------------------------------------------------------------------
 verify :: ParsedProgram -> IO Bool
@@ -157,8 +161,9 @@ wlp (Assume {..}) q = return $ stmtProperty :=>: q
 wlp (Assert {..}) q = return $ And [stmtProperty, q]
 
 wlp (Atomic {..}) q = do
-  p <- wlp atomicStmt q
-  return $ And [ atomicPost, p ]
+  p1 <- wlp atomicStmt atomicPost
+  p2 <- wlp atomicStmt q
+  return $ And [ p1, p2 ]
 
 wlp (Seq {..}) q = foldM (flip wlp) q (reverse seqStmts)
 
@@ -194,10 +199,12 @@ wlp stmt@(ForEach {..}) q = do
                       ] :=>:
                   pre
         invExit = Forall y $ (subst done exs inv) :=>: q -- invariant holds when done = xs
-    return $ And [ invInit
-                 , invStep
-                 , invExit
-                 ]
+        result = And [ invInit
+                     , invStep
+                     , invExit
+                     ]
+    -- traceM (smtS result)
+    return result
 
   where
     q'          = subst done (Bin SetAdd edone ex) inv
@@ -206,8 +213,15 @@ wlp stmt@(ForEach {..}) q = do
     xs          = bvar forList
     ex          = Var x
     exs         = Var xs
-    (done, inv) = forInvariant
+    (done,_inv) = forInvariant
     y           = updatedVars stmt
+    inv         = case forStmt of
+                    Atomic { stmtData = a2
+                           , ..
+                           } -> And [ _inv
+                                    , atomicPost
+                                    ]
+                    _ -> _inv
 
 wlp (Par {..}) q = do
   withElem stmtProcess stmtProcessSet $ do
@@ -222,7 +236,7 @@ wlp (Par {..}) q = do
                 , ..
                 }
     traceM (pretty atomizedStmt)
-    forM_ (IM.toList m) $ \(n, la) -> traceM (pretty $ actionStmt la)
+    --forM_ (IM.toList m) $ \(n, la) -> traceM (pretty $ actionStmt la)
       
     let _i = Forall [Bind stmtProcess Int] $
             And [ And [ Atom SetMem varP varPs
@@ -238,9 +252,9 @@ wlp (Par {..}) q = do
                   in case posts of
                        [] -> TT
                        _  -> Or posts
-                | (l, la) <- IM.toList m
+                | l <- pcExit : IM.keys m
                 ]
-        i = trace (printf "I: [[[%s]]]" (pretty $ simplifyProp _i)) _i
+        i = trace (printf "I: %s\n\n" (pretty $ simplifyProp _i)) _i
         invInit = ( Forall [Bind stmtProcess Int] $
                     And [ Atom SetMem varP varPs
                         , Or [ Atom Eq (Select varPC varP) (Const pc0)
@@ -370,7 +384,7 @@ atomize = go
       let ss = case s of
                  Seq {..} -> seqStmts
                  _        -> [s]
-          (p', s') = mergeHelper ss
+          (p', s') = atomicMerge ss
       return $ Atomic { atomicPost = And (p:p')
                       , atomicStmt = case s' of
                                        [s0] -> s0
@@ -453,7 +467,7 @@ atomize = go
     mergeStmts [s]
       | isSimple s = do
           l <- incrCounter
-          let (ps, ss') = mergeHelper [s]
+          let (ps, ss') = atomicMerge [s]
               a         = stmtData s
               s'        = case ss' of
                             []   -> Skip a
@@ -469,7 +483,7 @@ atomize = go
 
     mergeStmts ss@(ss1:_) = do
       l <- incrCounter
-      let (ps, ss') = mergeHelper ss
+      let (ps, ss') = atomicMerge ss
           a         = stmtData ss1
           seq'      = Seq { seqStmts = ss'
                           , stmtData = a
@@ -480,25 +494,6 @@ atomize = go
                              , stmtData    = a
                              }
       return result
-
-    ------------------------------------------------------------
-    mergeHelper :: [Stmt a] -> ([Prop a], [Stmt a])
-    ------------------------------------------------------------
-    mergeHelper ss = (ps', ss')
-      where
-        ps' = case ps of
-                [] -> [TT]
-                _  -> ps
-        (ps, ss') = _mergeHelper ss
-
-    _mergeHelper []     = ([],[])
-    _mergeHelper (s:ss) = case s of
-                          Assert {..} -> if   assertBool
-                                         then (stmtProperty:ps', ss')
-                                         else (ps', s:ss')
-                          _ -> (ps', s:ss')
-      where
-        (ps', ss') = mergeHelper ss
 
     ------------------------------------------------------------
     -- can the statement merge with the following statement
@@ -522,6 +517,62 @@ atomize = go
       ForEach {..} -> False
       While   {..} -> False
       Seq     {..} -> False
+
+fixAtomicPost :: Stmt a -> Stmt a
+fixAtomicPost = go
+  where
+    go (Atomic {..})  = let ss = case atomicStmt of
+                                   Seq { stmtData = a2
+                                       , ..
+                                       } -> seqStmts
+                                   s -> [s]
+                            (ps, ss') = atomicMerge ss
+                            s' = case ss' of
+                                   [stmt1] -> stmt1
+                                   _       -> Seq { seqStmts = ss'
+                                                  , ..
+                                                  }
+                        in  Atomic { atomicStmt = s'
+                                   , atomicPost = simplifyProp $ And $ atomicPost:ps
+                                   , ..
+                                   }
+    go (Skip {..})    = Skip {..}
+    go (Par {..})     = Par {..}
+    go (Assign {..})  = Assign {..}
+    go (Seq {..})     = Seq { seqStmts = go <$> seqStmts
+                            , ..
+                            }
+    go (Assume {..})  = Assume {..}
+    go (Assert {..})  = Assert {..}
+    go (If {..})      = If { thenStmt = go thenStmt
+                           , elseStmt = go elseStmt
+                           , ..
+                           }
+    go (Cases {..})   = Cases { caseList = h <$> caseList
+                              , ..
+                              }
+      where
+        h (Case {..}) = Case { caseStmt = go caseStmt
+                             , ..
+                             }
+    go (ForEach {..}) = ForEach { forStmt = go forStmt
+                                , ..
+                                }
+    go (While {..})   = While { whileStmt = go whileStmt
+                              , ..
+                              }
+
+atomicMerge :: [Stmt a] -> ([Prop a], [Stmt a])
+atomicMerge = go
+  where
+    go []     = ([],[])
+    go (s:ss) = case s of
+                  Assert {..} -> if   assertBool
+                                 then (stmtProperty:ps', ss')
+                                 else (ps', s:ss')
+                  _ -> (ps', s:ss')
+      where
+        (ps', ss') = go ss
 
 
 --------------------------------------------------------------------------------
@@ -890,7 +941,7 @@ isElem p ps = do
   return $ maybe False (== ps) $ HM.lookup p g
 
 withElem :: Id -> Id -> VCGen a r ->  VCGen a r
-withElem p ps act = do
+withElem p ps act = withType p Int $ do
   c <- addElem
   r <- act
   when c removeElem
@@ -903,19 +954,17 @@ withElem p ps act = do
       VCState{..} <- get
       if (p /= "_")
         then
-        case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
-          (Nothing, Nothing) -> do
+        case HM.lookup p unfoldedProcesses of
+          Nothing -> do
             put $ VCState { unfoldedProcesses = HM.insert p ps unfoldedProcesses
-                          , typeEnv           = HM.insert p Int typeEnv
                           , ..
                           }
             -- return $ trace msg True
             return True
-          (Just ps', Just sort) ->
-            if   ps' == ps && sort == Int
+          Just ps' ->
+            if   ps' == ps
             then return False
             else error $ printf "adding %s \\in %s is weird !!!" p ps
-          _ -> error $ printf "adding %s \\in %s is weird !!!" p ps
         else
         return False
       where
@@ -925,10 +974,9 @@ withElem p ps act = do
     removeElem :: VCGen a ()
     removeElem = do
       VCState {..} <- get
-      case (HM.lookup p unfoldedProcesses, HM.lookup p typeEnv) of
-        (Just _, Just _) -> do
+      case HM.lookup p unfoldedProcesses of
+        Just _ -> do
           let st' = VCState { unfoldedProcesses = HM.delete p unfoldedProcesses
-                            , typeEnv           = HM.delete p typeEnv
                             , ..
                             }
           -- put $ trace msg st'

@@ -20,7 +20,9 @@ instance SMT (Prop a) where
   smt (And ps)       = parens (text "and" <+> vcat (fmap smt ps))
   smt (Or ps)        = parens (text "or"  $$ vcat (fmap smt ps))
   smt (p :=>: q)     = parens (text "=>" <+> (smt p $+$ smt q))
-  smt (Forall xs p)  = parens (text "forall" <+> vcat [parens (vcat (fmap smt xs)), smt p])
+  smt (Forall xs p)  = parens (cat [ text "forall" <+> parens (vcat (fmap smt xs))
+                                   , smt p
+                                   ])
   smt (Exists xs p)  = parens (text "exists" <+> vcat [parens (vcat (fmap smt xs)), smt p])
   smt (Let xs p)     = parens (text "let" <+> b $+$ smt p)
     where
