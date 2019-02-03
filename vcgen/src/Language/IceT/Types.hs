@@ -320,7 +320,18 @@ class Subst b where
   subst :: Id -> (Expr a) -> b a -> b a
 
 instance Subst Stmt where
-  subst v e (Assign {..})  = Assign { assignExpr = subst v e assignExpr, .. }
+  subst v e (Assign {..})  =
+    case e of
+      Var ve -> Assign { assignExpr        = subst v e assignExpr
+                       , stmtProcess       = h stmtProcess
+                       , assignFromProcess = h assignFromProcess
+                       , ..
+                       }
+        where
+          h argV = if argV == v then ve else argV
+      _      -> Assign { assignExpr = subst v e assignExpr
+                       , ..
+                       }
   subst v e (Seq {..})     = Seq { seqStmts = subst v e <$> seqStmts, .. }
   subst v e (ForEach {..})
     | v /= bvar forElement = ForEach { forInvariant = subst v e <$> forInvariant
@@ -383,7 +394,9 @@ instance Subst Prop where
           go (Let xs p)
             | v `elem` (bvar . fst <$> xs) = Let xs p
             | otherwise                    = Let xs (go p)
-          go p@(PVar _)              = p
+          go p@(PVar v')             = if   v == v'
+                                       then Prop e
+                                       else p
 
 -------------------------------------------------------------------------------
 -- Helper Functions

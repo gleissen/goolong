@@ -144,10 +144,9 @@ wlp (Assign {..}) q = do
 
   insertType v' t
 
-  return $
-    Atom Eq (Var v') e''
-    :=>:
-    subst v (Var v') q
+  let result = (Atom Eq (Var v') e'') :=>: (subst v (Var v') q)
+
+  return result
 
   where
     p  = stmtProcess
@@ -243,15 +242,15 @@ wlp (Par {..}) q = do
                       , Atom Eq (pc ps p) (Const l)
                       ]
                   :=>:
-                  let posts = [ if   l' == pcExit
-                                then TT
-                                else let la' = m IM.! l'
-                                     in atomicPost $ actionStmt la'
-                              | l' <- G.pre g l
-                              ]
-                  in case posts of
+                  let pres = [ if   l' == pcExit
+                               then TT
+                               else let la' = m IM.! l'
+                                    in atomicPost $ actionStmt la'
+                             | l' <- G.pre g l
+                             ]
+                  in case pres of
                        [] -> TT
-                       _  -> Or posts
+                       _  -> Or pres
                 | l <- pcExit : IM.keys m
                 ]
         i = trace (printf "I: %s\n\n" (pretty $ simplifyProp _i)) _i
@@ -269,8 +268,9 @@ wlp (Par {..}) q = do
                             ]
                       , i
                       ] :=>: q
-        cf l = And [ Atom Eq (pc ps p) (Const l)
-                   , Or [ Atom Eq varPC' (Store varPC varP (Const l'))
+        -- p0 is the one that is making the transition ...
+        cf l = And [ Atom Eq (pc ps p0) (Const l)
+                   , Or [ Atom Eq varPC' (Store varPC varP0 (Const l'))
                         |  l' <- G.suc g l
                         ]
                    ]
@@ -563,7 +563,9 @@ fixAtomicPost = go
                               }
 
 atomicMerge :: [Stmt a] -> ([Prop a], [Stmt a])
-atomicMerge = go
+atomicMerge stmts = case go stmts of
+                      ([],stmts') -> ([TT], stmts')
+                      res         -> res
   where
     go []     = ([],[])
     go (s:ss) = case s of
