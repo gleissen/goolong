@@ -31,7 +31,10 @@ prog(tmp,
 
      ensures
     (
-      true
+      forall([decl(i,int)],
+             implies(elem(i,ps),
+                     and([true
+                         ])))
     ),
 
      seq([
@@ -73,20 +76,27 @@ prog(tmp,
               seq([for(A,C,as,_,
                        true,
                        seq([atomic(seq([
-                                        pre(A,forall([decl(i,int)],
+                                        pre(A,
+                                            and([
+                                                 ref(k,A)+ref(l,A)+ref(m,A)=card(as),
+                                                 ref(k,A)=0,
+                                                 ref(decided,A)=0,
+                                                 ref(ready,A)=0
+                                                ])
+                                           ),
+                                        pre(A,forall([decl(i,int),decl(j,int)],
                                                      implies(and([elem(i,ps),
-                                                                  here(i)
-                                                                 ]),
-                                                             and([ref(ready,i)=0
-                                                                 ])))),
-                                        pre(A,forall([decl(i,int)],
-                                                     implies(elem(i,ps),
-                                                             and([
-                                                                  ref(k,i)+ref(l,i)+ref(m,i)=card(as),
-                                                                  ref(k,i)=0,
-                                                                  ref(decided,i)=0
-                                                                 ])
-                                                             ))),
+                                                                  elem(j,as),
+                                                                  ref(l,i)>card(as)/2,
+                                                                  ref(k,i)=0]),
+                                                             ref(wT,j)<ref(t,i)))),
+                                        pre(A,forall([decl(qa,int), decl(qp,int)],
+                                                     implies(and([elem(qa,as),
+                                                                  elem(qp,ps),
+                                                                  ref(ready,qp)=1,
+                                                                  ref(t,qp)=<ref(wT,qa),
+                                                                  ref(k,qp)+ref(l,qp)>card(as)/2]),
+                                                             ref(w,qa)=ref(x,qp)))),
                                         assign(A,id,A),
                                         assign(C,pair(msgType,pair(pID,pair(pt,px))),
                                                A,pair(0,pair(id,pair(t,0)))),
@@ -119,33 +129,41 @@ prog(tmp,
                    
                    ite(A,2*ref(ho,A)>card(as),
                        seq([
-                            pre(A,forall([decl(i,int)],
+                            pre(A, implies(ref(decided,A)=1,
+                                           and([ref(k,A)>card(as)/2,
+                                                ref(ho,A)>card(as)/2,
+                                                ref(ready,A)=1
+                                               ])
+                                          )),
+                            pre(A,
+                                and([ref(decided,A)=0,
+                                     ref(k,A)=0,
+                                     ref(k,A)+ref(l,A)+ref(m,A)=card(as)
+                                    ])),
+                            pre(A,forall([decl(i,int),decl(j,int)],
                                          implies(and([elem(i,ps),
-                                                      ref(decided,i)=1]),
-                                                 and([ref(k,i)>card(as)/2,
-                                                      ref(ho,i)>card(as)/2,
-                                                      ref(ready,i)=1])))),
-                            pre(A,forall([decl(i,int)],
-                                         implies(and([elem(i,ps),
-                                                      here(i)]),
-                                                 and([ref(decided,i)=0,
-                                                      ref(k,i)=0,
-                                                      ref(k,i)+ref(l,i)+ref(m,i)=card(as)
-                                                     ])))),
+                                                      elem(j,as),
+                                                      ref(l,i)>card(as)/2,
+                                                      ref(k,i)=0]),
+                                                 ref(wT,j)<ref(t,i)))),
+                            pre(A,forall([decl(qa,int), decl(qp,int)],
+                                         implies(and([elem(qa,as),
+                                                      elem(qp,ps),
+                                                      ref(ready,qp)=1,
+                                                      ref(t,qp)=<ref(wT,qa),
+                                                      ref(k,qp)+ref(l,qp)>card(as)/2]),
+                                                 ref(w,qa)=ref(x,qp)))),
                             assign(A,ho,0),
                             assign(A,ready,1),
 
                             for(A,C,as,_,
                                 true,
                                 seq([atomic(seq([
-                                                 pre(A,forall([decl(i,int)],
-                                                              implies(and([elem(i,ps),
-                                                                           here(i)]),
-                                                                      and([ref(ready,i)=1,
-                                                                           ref(decided,i)=0,
-                                                                           ref(ho,i)=<ref(k,i),
-                                                                           ref(k,i)+ref(l,i)+ref(m,i)=card(as)
-                                                                          ])))),
+                                                 pre(A, and([ref(ready,A)=1,
+                                                             ref(decided,A)=0,
+                                                             ref(ho,A)=<ref(k,A),
+                                                             ref(k,A)+ref(l,A)+ref(m,A)=card(as)
+                                                            ])),
                                                  pre(A,forall([decl(qa,int), decl(qp,int)],
                                                               implies(and([elem(qa,as),
                                                                            elem(qp,ps),
@@ -211,9 +229,11 @@ prog(tmp,
                                                 ]))
                                     ]))
 
+
                            ]),
                        skip
-                       )
+                      )
+                   
                   ]))
 
          ])).

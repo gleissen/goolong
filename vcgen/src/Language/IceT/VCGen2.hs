@@ -456,7 +456,7 @@ atomize = go
                  []    -> [[s']]
                  []:ls -> error "partitionStmts returned an empty list"
                  (l@(lh:_)):ls ->
-                   if   canMerge lh
+                   if   canMerge lh && canMerge s'
                    then (s':l):ls
                    else [[s']] ++ ss'
 
