@@ -81,15 +81,19 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 	//    Initialization
 	// =====================
 
-	/*{-@ pre: and([
-					ref(t,P)>0,
-					ref(ready,P)=0,
-					ref(decided,P)=0,
-					ref(ho,P)=0,
-					ref(k,P) = 0,
-					ref(l,P) = card(as),
-					ref(m,P) = 0
-				])
+	/*{-@ pre:
+	forall([decl(i,int)],
+		implies(
+			elem(i,r),
+			and([ref(t,i)>0,
+				ref(ready,i)=0,
+				ref(decided,i)=0,
+                ref(ho,i)=0,
+                ref(k,i)=0,
+                ref(l,i)=card(as),
+                ref(m,i)=0
+                ])))
+
 	 -@}*/
 	t.Assign(int32(*termArg))
 	xT.Assign(0)
@@ -97,38 +101,56 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 	ho.Assign(0)
 	ready.Assign(0)
 	decided.Assign(0)
-	/*{-@ assume: forall([decl(i,int)],
-										and([
-											ref(t,i) > 0,
-											ref(m,i)=0,
-											ref(l,i) = card(as),
-											ref(k,i) = 0
-										])
-							)
-	-@}*/
+	/*{-@ assume: and([ref(t,P)>0,
+                       ref(m,P)=0,
+                       ref(l,P)=card(as),
+                       ref(k,P)=0])
+	 -@}*/
+
 
 	// =====================
 	//    Proposal phase
 	// =====================
 
 	for Peer := range n.PeerIds {
-		// Precondition
-
-		/*{-@pre: forall([decl(i,int)],
-						implies(
-									and([
-												elem(i,ps),
-												here(i)
-									 		]),
-									and([
-									 			ref(ready, i)=0,
-												ref(decided, i)=0,
-												ref(k,i)=0,
-												ref(k,i) + ref(l,i) + ref(m,i) = card(as)
-											])
-										)
-									)
+		/*{-@ pre:
+        and([
+             ref(k,P)+ref(l,P)+ref(m,P)=card(as),
+             ref(k,P)=0,
+             ref(decided,P)=0,
+             ref(ready,P)=0
+            ])
 		-@}*/
+
+		/*{-@ pre:
+        implies(ref(decided,P)=1,
+                and([ref(k,P)>card(as)/2,
+                     ref(ho,P)>card(as)/2,
+                     ref(ready,P)=1
+                    ])
+               )
+		-@}*/
+
+		/*{-@ pre:
+        forall([decl(i,int),decl(j,int)],
+               implies(and([elem(i,ps),
+                            elem(j,as),
+                            ref(l,i)>card(as)/2,
+                            ref(k,i)=0]),
+                       ref(wT,j)<ref(t,i)))
+		-@}*/
+
+		/*{-@ pre:
+        forall([decl(qa,int), decl(qp,int)],
+               implies(and([elem(qa,as),
+                            elem(qp,ps),
+                            ref(ready,qp)=1,
+                            ref(t,qp)=<ref(wT,qa),
+                            ref(k,qp)+ref(l,qp)>card(as)/2]),
+                       ref(w,qa)=ref(x,qp)))
+		-@}*/
+
+
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
 		fmt.Printf("prop: sending proposal %v and id %v to %v\n", t.Get(), id.Get(), Peer)
@@ -157,127 +179,110 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 		//  Acceptance phase
 		// =====================
 
-		/*{-@pre: forall([decl(i,int)],
-				implies(
-							and([
-								elem(i,ps),
-								ref(decided,i)=1
-							]),
-		          and([ ref(k,i) > card(as)/2,
-		                ref(ho,i) > card(as)/2,
-		                ref(ready,i)=1
-		             ])
-							)
-				)
+		/*{-@ pre:
+        implies(ref(decided,P)=0,
+                and([ref(k,P)>card(as)/2,
+                     ref(ho,P)>card(as)/2,
+                     ref(ready,P)=1
+                    ]))
+
 		-@}*/
 
-		/*{-@pre: forall([decl(i,int)],
-							implies(
-									and([
-										elem(i,ps),
-										here(i)
-										]),
-		             and([
-								 		ref(decided,i)=0,
-		                ref(k,i)=0,
-		                ref(k,i) + ref(l,i) + ref(m,i) = card(as)
-		                ])
-								)
-					)
-				-@}*/
+		/*{-@ pre:
+        and([ref(decided,P)=0,
+             ref(ready,P)=1,
+             ref(k,P)=0,
+             ref(ho,P)=<ref(k,P),
+             ref(k,P)+ref(l,P)+ref(m,P)=card(as)
+		    ])
+		-@}*/
+
+		/*{-@ pre:
+        forall([decl(i,int),decl(j,int)],
+               implies(and([elem(i,ps),
+                            elem(j,as),
+                            ref(l,i)>card(as)/2,
+                            ref(k,i)=0]),
+		                    ref(wT,j)<ref(t,i)))
+		-@}*/
+
+		/*{-@ pre:
+        forall([decl(qa,int), decl(qp,int)],
+               implies(and([elem(qa,as),
+                            elem(qp,ps),
+                            ref(ready,qp)=1,
+                            ref(t,qp)=<ref(wT,qa),
+                            ref(k,qp)+ref(l,qp)>card(as)/2]),
+                            ref(w,qa)=ref(x,qp)))
+		-@}*/
+
+
+
+
 		ho.Assign(0)
 		ready.Assign(1)
 
 		for Peer := range n.PeerIds {
-
-			/*{-@pre: forall([decl(i,int)],
-			              	implies(
-														and([
-															elem(i,ps),
-															here(i)
-														]),
-			                      and([
-															ref(ready,i)=1,
-			                        ref(decided,i)=0,
-			                        ref(ho,i) =< ref(k,i),
-			                        ref(k,i) + ref(l,i) + ref(m,i) = card(as)
-			                      ])
-											   )
-			              )
-					-@}*/
-
-			/*{-@pre: forall([decl(i,int),decl(j,int)],
-			                          implies(
-																	and([
-																		elem(i,ps),
-																		elem(j,as),
-																		ref(l,i) > card(as)/2,
-																		ref(k,i)=0
-																	]),
-			                            ref(wT,j) < ref(t,i)
-																)
-													)
-						-@}*/
-
-			/*{-@pre: forall([decl(qa,int),decl(qp,int)],
-			                          implies(
-																	and([
-																		elem(qa,as),
-																		elem(qp,ps),
-																		ref(ready,qp)=1,
-																		ref(t,qp) =< ref(wT,qa),
-																		ref(k,qp)+ref(l,qp) > card(as)/2
-																		]),
-			                             ref(w,qa)=ref(x,qp)
-																)
-													)
+            /*{-@ pre: and([ref(ready,P)=1,
+                        ref(decided,P)=0,
+                        ref(ho,P)=<ref(k,P),
+                        ref(k,P)+ref(l,P)+ref(m,P)=card(as)
+                       ])
 			-@}*/
 
-			//{-@ assume: forall([decl(i,int)], implies(ref(t,i)=ref(t,P), i=P)) -@}
-
-			// these facts are derived from cardinalities
-
-			/*{-@assume: forall([decl(i,int)],
-					implies(
-						and([
-									elem(i,ps),
-									ref(l,i) > card(as)/2
-							]),
-							or([
-									ref(ready,P)=0,
-									ref(t,P) < ref(t,i)
-								])
-							)
-				)
+            /*{-@ pre: implies(ref(decided,P)=1,
+                           and([ref(k,P)>card(as)/2,
+                                ref(ho,P)>card(as)/2,
+                                ref(ready,P)=1
+                               ])
+                          )
 			-@}*/
 
-			//{-@declare: decl(a0, int) -@}
-
-			//{-@assume: elem(a0,as) -@}
-
-			/*{-@assume: implies(
-											and([0 < ref(xT,P)]),
-											and([
-														ref(x,P) = ref(w,a0),
-														ref(xT,P) = ref(wT,a0)
-											])
-										)
+            /*{-@ pre: forall([decl(qa,int), decl(qp,int)],
+                         implies(and([elem(qa,as),
+                                      elem(qp,ps),
+                                      ref(ready,qp)=1,
+                                      ref(t,qp)=<ref(wT,qa),
+                                      ref(k,qp)+ref(l,qp)>card(as)/2]),
+                                 ref(w,qa)=ref(x,qp)))
 			-@}*/
 
-			/*{-@assume: forall([decl(i,int)],
-														implies(
-																and([
-																	elem(i,ps),
-																	ref(ready,i)=1,
-																	ref(k,i)+ref(l,i) > card(as)/2,
-																	ref(ready,P)=1
-																]),
-																and([
-																	ref(t,i) =< ref(xT,P),
-																	0 < ref(xT,P)
-																])
-														)
-											)
+            /*{-@ pre: forall([decl(i,int),decl(j,int)],
+                         implies(and([elem(i,ps),
+                                      elem(j,as),
+                                      ref(l,i)>card(as)/2,
+                                      ref(k,i)=0]),
+                                 ref(wT,j)<ref(t,i)))
+			-@}*/
+
+            /*{-@ assume: forall([decl(i,int)],
+                            implies(ref(t,i)=ref(t,P),
+                                    i=P))
+			-@}*/
+
+			// {-@ declare: decl(a0, int) -@}
+
+			// {-@ assume: elem(a0,as) -@}
+
+            /*{-@ assume: forall([decl(i,int)],
+                            implies(and([elem(i,ps),
+                                         ref(l,i)>card(as)/2]),
+                                    or([ref(ready,P)=0,
+                                        ref(t,P)<ref(t,i)])))
+			-@}*/
+
+            /*{-@ assume: implies(and([0<ref(xT,P)]),
+                             and([ref(x,P)=ref(w,a0),
+                                  ref(xT,P)=ref(wT,a0)]))
+			-@}*/
+
+            /*{-@ assume: forall([decl(i,int)],
+                            implies(and([elem(i,ps),
+                                         ref(ready,i)=1,
+                                         ref(k,i)+ref(l,i)>card(as)/2,
+                                         ref(ready,P)=1]),
+                                    and([ref(t,i)=<ref(xT,P),
+                                         0<ref(xT,P)])))
 			-@}*/
 
 			n.SendAccept(Peer, id, t, x)
@@ -295,24 +300,49 @@ func runProposer(peerAddresses []string, termArg *int, proposalArg *int, done ch
 			//{-@ group: end -@}
 
 		}
-		// FIXME
+
 		if 2*int(ho.Get()) > n.NumPeers() {
 
-			/*{-@pre: forall([decl(i,int)],
-			             implies(
-									 		and([elem(i,ps),here(i)]),
-			                and([
-													ref(ready,i)=1,
-			                    ref(ho,i) =< ref(k,i),
-			                    ref(k,i) + ref(l,i) + ref(m,i) = card(as)
-			                   ])
-										)
-			          )
+            /*{-@pre: and([ref(ready,P)=1,
+                        ref(decided,P)=1,
+                        ref(ho,P)=<ref(k,P),
+                        ref(k,P)+ref(l,P)+ref(m,P)=card(as)
+					   ])
+			-@}*/
+
+            /*{-@pre: forall([decl(qa,int), decl(qp,int)],
+                         implies(and([elem(qa,as),
+                                      elem(qp,ps),
+                                      ref(ready,qp)=1,
+                                      ref(t,qp)=<ref(wT,qa),
+                                      ref(k,qp)+ref(l,qp)>card(as)/2]),
+								 ref(w,qa)=ref(x,qp)))
+			-@}*/
+
+            /*{-@pre: forall([decl(i,int),decl(j,int)],
+                         implies(and([elem(i,ps),
+                                      elem(j,as),
+                                      ref(l,i)>card(as)/2,
+                                      ref(k,i)=0]),
+								 ref(wT,j)<ref(t,i)))
+			-@}*/
+
+            /*{-@pre: implies(ref(decided,P)=1,
+                           and([ref(k,P)>card(as)/2,
+                                ref(ho,P)>card(as)/2,
+                                ref(ready,P)=1
+                               ])
+						  )
 			-@}*/
 			decided.Assign(1)
 			fmt.Printf("prop: value %v for ballot %v accepted, yay!\n", x.Get(), t.Get())
+		} else {
+  	         /*{-@pre: ref(decided,P)=0 -@}*/
+			fmt.Printf("prop: proposal failed.\n")
 		}
 	} else {
+        /*{-@pre: ref(decided,P)=0 -@}*/
+
 		fmt.Printf("prop: proposal failed.\n")
 	}
 	n.Shutdown()
@@ -338,7 +368,13 @@ func runAcceptor(peerAddresses []string) {
 	success := gochai.NewUInt8()
 	// Initializations
 
-	/*{-@pre: ref(wT,A) = 0 -@}*/
+	/*{-@ pre:
+    forall([decl(i,int)],
+           implies(elem(i,r),
+                   ref(wT,i)=0
+                   ))
+
+	-@}*/
 	max.Assign(0)
 	wT.Assign(0)
 	w.Assign(-1)
@@ -374,30 +410,19 @@ func runAcceptor(peerAddresses []string) {
 	}
 }
 
-/*{-@ ensures: forall([
-									decl(a0,int),
-									decl(p1,int),
-									decl(p2,int)
-									],
-                  implies(
-                      and([
-												elem(a0,as),
-                        elem(p1,ps),
-                        elem(p2,ps),
-                        ref(decided,p1)=1,
-                        ref(decided,p2)=1,
-                              implies(and([
-																					ref(k,p1) > card(as)/2,
-                                    			ref(k,p2) > card(as)/2
-																			]),
-                                    	and([
-																					ref(t,p1) =< ref(wT,a0),
-																					ref(t,p2) =< ref(wT,a0)
-																				])
-															),
-                              0 =< ref(l, p1),
-															0 =< ref(l ,p2)
-															]),
-                              ref(x,p1) = ref(x,p2))
-									)
+/*{-@ ensures:
+      forall([decl(a0,int),decl(p1,int),decl(p2,int)],
+             implies(and([elem(a0,as),
+                          elem(p1,ps),
+                          elem(p2,ps),
+                          ref(decided,p1)=1,
+                          ref(decided,p2)=1,
+                          implies(and([ref(k,p1)>card(as)/2,
+                                       ref(k,p2)>card(as)/2]),
+                                  and([ref(t,p1)=<ref(wT,a0),
+                                       ref(t,p2)=<ref(wT,a0)])),
+                          0=<ref(l,p1),
+                          0=<ref(l,p2)]),
+                     ref(x,p1)=ref(x,p2)))
+
 	-@}*/
