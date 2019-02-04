@@ -20,12 +20,11 @@ import qualified Data.IntSet                       as IS
 import           Data.List (nub, isInfixOf, foldl')
 import           GHC.IO.Handle
 import           System.Exit
-import           System.IO
 import           System.Process
 import           Text.Printf
 
 import Language.IceT.Pretty
-import Debug.Trace
+-- import Debug.Trace
 
 
 
@@ -44,9 +43,7 @@ data VCState a = VCState { freshCounter       :: Int              -- used to cre
                          , parallelProcesses  :: HS.HashSet Id    -- symmetric sets we have seen so far
 
                          -- atomic action related stuff
-                         , actionMap          :: ActionMap a    -- map from action labels to actions
-                         , actionForLoop      :: Maybe (Stmt a) -- used to check whether in for loop or not
-                         , actionProp         :: Prop a         -- used for integrating loop invariants actions
+                         , actionMap     :: ActionMap a    -- map from action labels to actions
                          }
 
 type VCGen a r = State (VCState a) r
@@ -61,50 +58,48 @@ verifyFile fp = do
   verify program
 
 -------------------------------------------------------------------------------
+-- given a program, writes the verification conditions into a file
 writeSMT :: ParsedProgram -> IO ()
 -------------------------------------------------------------------------------
 writeSMT (Program{..}) = do
-  writeFile filename vcstr
-  printf "Wrote smt2 file to %s\n" filename
+  writeFile smtFilename vcstr
+  debugM $ printf "Wrote smt2 file to %s\n" smtFilename
 
   where
-    filename = ".query.smt2" 
-    vcstr = createSMTQuery decls' pss vc'
-
-    vc' = simplifyProp vc
-    -- vc' = trace (pretty _vc') _vc'
-    -- vc' = vc
+    vcstr  = createSMTQuery decls' pss vc
+    decls' = fmap (uncurry Bind) . HM.toList $ typeEnv lastState -- type declarations
+    pss    = HS.toList $ parallelProcesses lastState             -- parallel processes
 
     (vc, lastState) = runState action initialState
-    initialState = VCState { freshCounter       = 0
-                           , typeEnv            = tenv
-                           , unfoldedProcesses  = HM.empty
-                           , parallelProcesses  = HS.empty
-                           , actionMap          = IM.empty
-                           , actionProp         = TT
-                           , actionForLoop      = Nothing
-                           }
-    tenv       = makeTypeEnv decls
-    decls'     = fmap (uncurry Bind) . HM.toList $ typeEnv lastState
-    action     = wlp prog' ensures
-    preprocess = fixAtomicPost . updateTypes tenv
-    prog'     = preprocess prog
-    -- prog'      = trace (pretty _prog') _prog'
-    pss        = HS.toList $ parallelProcesses lastState
+    tenv            = makeTypeEnv decls
+    initialState    = VCState { freshCounter       = 0
+                              , typeEnv            = tenv
+                              , unfoldedProcesses  = HM.empty
+                              , parallelProcesses  = HS.empty
+                              , actionMap          = IM.empty
+                              }
+
+    preProcess  = fixAtomicPost . updateTypes tenv
+    postProcess = simplifyProp
+    action      = postProcess <$> wlp (preProcess prog) ensures
+
+smtFilename :: String
+smtFilename = ".query.smt2"
 
 -------------------------------------------------------------------------------
+-- checks the verification conditions using Z3
 verify :: ParsedProgram -> IO Bool
 -------------------------------------------------------------------------------
 verify p = do
   writeSMT p
 
-  (inp, out, err, pid) <- runInteractiveProcess "z3" ["-smt2", ".query.smt2"] Nothing Nothing
+  (inp, out, err, pid) <- runInteractiveProcess "z3" ["-smt2", smtFilename] Nothing Nothing
   ec   <- waitForProcess pid
   outp <- hGetContents out
   errp <- hGetContents err
 
-  putStrLn outp
-  hPutStr stderr errp
+  debugM outp
+  debugM errp
 
   case ec of
     ExitSuccess   -> return ("unsat" `isInfixOf` outp)
@@ -112,6 +107,7 @@ verify p = do
 
 
 -------------------------------------------------------------------------------
+-- computes the weakest liberal precondition of a given statement
 wlp :: VCAnnot a => Stmt a -> Prop a -> VCGen a (Prop a)
 -------------------------------------------------------------------------------
 wlp (Skip {..}) q = return q
@@ -126,7 +122,7 @@ wlp (Assign {..}) q = do
           -- if the rhs is a variable, and it's a map
           -- (i.e. from processes to values)
           -- replace it with a Select
-          -- (this is probably due to parsing of pairs ...)
+          -- (this is probably due how we parse assignment between pairs ...)
           Var x -> do
             t' <- getType x
             case t' of
@@ -139,11 +135,8 @@ wlp (Assign {..}) q = do
   let e'' = case t of
               Map _ _ -> Store (Var v) (Var p) e'
               _       -> e'
-
   insertType v' t
-
   let result = (Atom Eq (Var v') e'') :=>: (subst v (Var v') q)
-
   return result
 
   where
@@ -157,6 +150,8 @@ wlp (Assume {..}) q = return $ stmtProperty :=>: q
 
 wlp (Assert {..}) q = return $ And [stmtProperty, q]
 
+-- strengthen the precondition with the atomic block's post condition
+-- i.e. wlp(< stmt :: P >, Q) = wlp(stmt, P) /\ wlp(stmt, Q)
 wlp (Atomic {..}) q = do
   p1 <- wlp atomicStmt atomicPost
   p2 <- wlp atomicStmt q
@@ -188,62 +183,63 @@ wlp stmt@(ForEach {..}) q = do
     pre <- wlp forStmt q'
     let invInit = subst done EmptySet inv -- invariant holds when done = empty
         -- if invariant holds for done, then it holds for done U {x} after executing the loop
-        invStep = Forall y $              
+        invStep = Forall y $
                   And [ inv
                       , Atom SetMem ex exs
                       , Not $ Atom SetMem ex edone
                       , Atom SetSub edone exs
-                      ] :=>:
-                  pre
+                      ] :=>: pre
         invExit = Forall y $ (subst done exs inv) :=>: q -- invariant holds when done = xs
         result = And [ invInit
                      , invStep
                      , invExit
                      ]
-    -- traceM (smtS result)
     return result
 
   where
-    q'          = subst done (Bin SetAdd edone ex) inv
-    edone       = Var done
-    x           = bvar forElement
-    xs          = bvar forList
-    ex          = Var x
-    exs         = Var xs
-    (done,_inv) = forInvariant
-    y           = updatedVars stmt
-    inv         = case forStmt of
-                    Atomic { stmtData = a2
-                           , ..
-                           } -> And [ _inv
-                                    , atomicPost
-                                    ]
-                    _ -> _inv
+    q'    = subst done (Bin SetAdd edone ex) inv -- I[done U {x}/done]
+    edone = Var done
+    x     = bvar forElement
+    xs    = bvar forList
+    ex    = Var x
+    exs   = Var xs
+    done  = fst forInvariant
+    y     = updatedVars stmt
+    -- If the for loop contains an atomic statement,
+    -- then pull the post condition into the loop invariant
+    -- (since that is where the invariant ends up in this case)
+    inv   = let rest = case forStmt of
+                         Atomic { stmtData = a2, ..} -> [atomicPost]
+                         _                           -> []
+            in And $ (snd forInvariant):rest
 
 wlp (Par {..}) q = do
   withElem stmtProcess stmtProcessSet $ do
     VCState{..} <- get
+    -- compute the atomic actions inside this parallel loop, and
+    -- generate the control flow graph
     ActionResult{ arMap    = m
                 , arCFG    = g
                 , arPC0s   = pc0s
                 , arPCExit = pcExit
                 , arStmt   = atomizedStmt
                 } <- extractCFG stmtProcessSet parStmt
+    -- update the state the include the id of the current set of parallel processes
     put VCState { parallelProcesses = HS.insert stmtProcessSet parallelProcesses
                 , ..
                 }
-    traceM (pretty atomizedStmt)
-    --forM_ (IM.toList m) $ \(n, la) -> traceM (pretty $ actionStmt la)
-      
-    let _i = Forall [Bind stmtProcess Int] $
+    debugM (pretty atomizedStmt)
+
+    -- I = forall p \in ps. pc[p] = l -> P1 \/ P2 \/ ...
+    -- where P1, P2, .. are the post conditions of the atomic blocks
+    -- that are the immediate predecessors of l
+    let i = Forall [Bind stmtProcess Int] $
             And [ And [ Atom SetMem varP varPs
                       , Atom Eq (pc ps p) (Const l)
                       ]
                   :=>:
-                  let pres = [ if   l' == pcExit
-                               then TT
-                               else let la' = m IM.! l'
-                                    in atomicPost $ actionStmt la'
+                  let pres = [ let la' = m IM.! l'
+                               in  atomicPost $ actionStmt la'
                              | l' <- G.pre g l
                              ]
                   in case pres of
@@ -251,14 +247,16 @@ wlp (Par {..}) q = do
                        _  -> Or pres
                 | l <- pcExit : IM.keys m
                 ]
-        i = trace (printf "I: %s\n\n" (pretty $ simplifyProp _i)) _i
-        invInit = ( Forall [Bind stmtProcess Int] $
+    debugM $ printf "I: %s\n\n" (pretty $ simplifyProp i)
+    -- initially, I holds
+    let invInit = ( Forall [Bind stmtProcess Int] $
                     And [ Atom SetMem varP varPs
                         , Or [ Atom Eq (Select varPC varP) (Const pc0)
-                             | pc0 <- pc0s 
+                             | pc0 <- pc0s
                              ]
                         ]
                   ) :=>: i
+        -- when everyone is at pc_exit and I holds, Q must hold
         invExit = Forall y $
                   And [ Forall [Bind stmtProcess Int] $
                         And [ Atom SetMem varP varPs
@@ -267,6 +265,7 @@ wlp (Par {..}) q = do
                       , i
                       ] :=>: q
         -- p0 is the one that is making the transition ...
+        -- cf l returns the labels that l can transition into
         cf l = And [ Atom Eq (pc ps p0) (Const l)
                    , Or [ Atom Eq varPC' (Store varPC varP0 (Const l'))
                         |  l' <- G.suc g l
@@ -285,6 +284,10 @@ wlp (Par {..}) q = do
                            | (_,la) <- IM.toList m
                            , (pp,_) <- HM.toList $ actionUnfolding la
                            ]
+    -- if I holds and p0 makes a transition,
+    -- (i.e. from < a1 :: P1 > to < a2 :: P2 >)
+    -- then the wlp(a1[p0/p], I[pc'/pc]) should hold
+    -- pc' is defined in the function "cf" above
     let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
                   And [ And [ i
                             , cf l
@@ -311,6 +314,8 @@ wlp (Par {..}) q = do
     varPC  = Var $ pcName ps
     varPC' = Var $ pcName' ps
 
+    -- run an action, in an updated type environment and set of unfolded processes
+    -- we keep the new type environment, otherwise we get undefined variable errors !
     withActionState :: Action a -> VCGen a r -> VCGen a r
     withActionState la act = do
       let uf = actionUnfolding la
@@ -323,16 +328,13 @@ wlp (Par {..}) q = do
                                       , ..
                                       }
       result <- act
-      -- keep the new type environment !
       modify $ \VCState{..} -> VCState{ unfoldedProcesses = oldUnfoldings
                                       , ..
                                       }
       return result
 
+-- while is not implemented :(
 wlp (While {..}) q = undefined
-
-
-
 
 
 
@@ -344,16 +346,19 @@ wlp (While {..}) q = undefined
 -------------------------------------------------------------------------------
 -------------------------------------------------------------------------------
 
-data Action a = Action { actionStmt        :: Stmt a        -- this is the atomic action
-                       , actionUnfolding   :: HM.HashMap Id Id
-                       , actionTypeEnv     :: TypeEnv
+data Action a = Action { actionStmt        :: Stmt a           -- this is the atomic action
+                       , actionUnfolding   :: HM.HashMap Id Id -- loop unfoldings we have in this action
+                       , actionTypeEnv     :: TypeEnv          -- extra type information we have in this action
                        }
 
-data ActionResult a = ActionResult { arMap    :: ActionMap a
-                                   , arPC0s   :: [Int]
-                                   , arPCExit :: Int
-                                   , arCFG    :: CFG
-                                   , arStmt   :: Stmt a -- stmt after atomization
+data ActionResult a = ActionResult { arMap    :: ActionMap a -- a map from action labels to actions
+                                   , arPC0s   :: [Int]       -- set of initial actions (i.e. roots of the graph)
+                                   , arPCExit :: Int         -- exit label
+                                   , arCFG    :: CFG         -- control flow graph of the actions
+
+                                   -- stmt that was inside parallel loop after atomization
+                                   -- this is for debugging purposes
+                                   , arStmt   :: Stmt a
                                    }
 
 type ActionPath a  = [ Prop a ]
@@ -365,7 +370,8 @@ type CFG           = UGr
 -- Merge local statements together to create a program consists of only atomic
 -- actions to be used for generating the verification conditions for the
 -- parallel case.
--- This stateful computation only increments the fresh counter variable.
+-- This stateful computation only increments the fresh counter variable, that we
+-- need for fresh labels.
 --------------------------------------------------------------------------------
 atomize :: Stmt a -> VCGen a (Stmt a)
 --------------------------------------------------------------------------------
@@ -428,6 +434,7 @@ atomize = go
     go s@(Par {..})    = error "atomize.go is called with a parallel composition"
 
     ------------------------------------------------------------
+    -- first partition, then merge to create the atomic blocks
     goHelper :: [Stmt a] -> VCGen a [Stmt a]
     ------------------------------------------------------------
     goHelper ss = do
@@ -513,14 +520,16 @@ atomize = go
       While   {..} -> False
       Seq     {..} -> False
 
+--------------------------------------------------------------------------------
+-- pull the formulas inside the "pre" statements inside the atomic blocks into
+-- the post condition of the block
 fixAtomicPost :: Stmt a -> Stmt a
+--------------------------------------------------------------------------------
 fixAtomicPost = go
   where
     go (Atomic {..})  = let ss = case atomicStmt of
-                                   Seq { stmtData = a2
-                                       , ..
-                                       } -> seqStmts
-                                   s -> [s]
+                                   Seq { stmtData = a2, ..} -> seqStmts
+                                   s                        -> [s]
                             (ps, ss') = atomicMerge ss
                             s' = case ss' of
                                    [stmt1] -> stmt1
@@ -557,7 +566,12 @@ fixAtomicPost = go
                               , ..
                               }
 
+--------------------------------------------------------------------------------
+-- helper function for atomize and fixAtomicPost
+-- partitions a list of statements into formulas that occur in "pre" and the rest
+-- of the statements
 atomicMerge :: [Stmt a] -> ([Prop a], [Stmt a])
+--------------------------------------------------------------------------------
 atomicMerge stmts = case go stmts of
                       ([],stmts') -> ([TT], stmts')
                       res         -> res
@@ -575,7 +589,7 @@ atomicMerge stmts = case go stmts of
 --------------------------------------------------------------------------------
 -- given a symmetric set, a counter and a statement, returns the following:
 -- 1. A map from program counters to statements
--- 2. initial program location (l_0)
+-- 2. initial program locations
 -- 3. last program location (l_exit)
 -- 4. control flow graph
 --------------------------------------------------------------------------------
@@ -597,7 +611,7 @@ extractCFG ps stmt = do
                         , arStmt   = atomizedStmt
                         }
   where
-    -- returns the CF edges within a statement
+    -- returns the control flow edges **within** a statement
     go :: (Show a, VCAnnot a) => Stmt a -> [(Int, Int)]
     go (Seq {..}) = case seqStmts of
                       []       -> []
@@ -623,14 +637,18 @@ extractCFG ps stmt = do
     go (If {..})      = go thenStmt ++ go elseStmt
     go (Cases {..})   = (caseStmt <$> caseList) >>= go
     go (Atomic  {..}) = []
+    -- since our program should only consist of atomic blocks by now, the following throw an error
     go s@(Par     {..}) = error $ printf "extractCFG.go is called with a parallel composition !\n%s" (pretty s)
     go s@(Skip    {..}) = error $ printf "extractCFG.go is called with a skip !\n%s" (pretty s)
     go s@(Assert  {..}) = error $ printf "extractCFG.go is called with a assert !\n%s" (pretty s)
     go s@(Assume  {..}) = error $ printf "extractCFG.go is called with a assume !\n%s" (pretty s)
     go s@(Assign  {..}) = error $ printf "extractCFG.go is called with a assign !\n%s" (pretty s)
 
--- Returns the first statement(s) of a langugage construct, or the statement itself
+--------------------------------------------------------------------------------
+-- Returns the first statement(s) of a statement
+-- e.g. for a sequence "if(..){s1}else{s2}; s3; ...", the output is [s1, s2]
 firstStmt :: Show a => Stmt a -> [Stmt a]
+--------------------------------------------------------------------------------
 firstStmt s@(Atomic  {..}) = [s]
 firstStmt s@(ForEach {..}) = firstStmt forStmt
 firstStmt s@(While   {..}) = firstStmt whileStmt
@@ -641,8 +659,10 @@ firstStmt s@(Seq     {..}) = case seqStmts of
                                s1:_ -> firstStmt s1
 firstStmt s                = error $ printf "firstStmt called with %s" (show s)
 
--- Returns the last statement(s) of a langugage construct, or the statement itself
+--------------------------------------------------------------------------------
+-- Returns the last statement(s) of a statement
 lastStmt :: Show a => Stmt a -> [Stmt a]
+--------------------------------------------------------------------------------
 lastStmt s@(Atomic  {..}) = [s]
 lastStmt s@(ForEach {..}) = lastStmt forStmt
 lastStmt s@(While   {..}) = lastStmt whileStmt
@@ -653,8 +673,10 @@ lastStmt s@(Seq     {..}) = case seqStmts of
                               _  -> lastStmt $ last seqStmts
 lastStmt s                = error $ printf "firstStmt called with %s" (show s)
 
+--------------------------------------------------------------------------------
 -- creates a map from labeled statements
 createActionMap :: VCAnnot a => Stmt a -> VCGen a (ActionMap a)
+--------------------------------------------------------------------------------
 createActionMap rootStmt = do
   cleanup
   go rootStmt
@@ -665,87 +687,45 @@ createActionMap rootStmt = do
   where
     cleanup :: VCAnnot a => VCGen a ()
     cleanup = modify $
-      \VCState {..} -> VCState { actionMap       = IM.empty
-                               , actionForLoop   = Nothing
-                               , actionProp      = TT
+      \VCState {..} -> VCState { actionMap = IM.empty
                                , ..
                                }
 
     go :: VCAnnot a => Stmt a -> VCGen a ()
     go (Atomic{..}) = do
-      maybeLoop <- gets actionForLoop
-      case maybeLoop of
-        Just forLoop -> do
-          let x  = forElement forLoop
-              xs = forList forLoop
-              d  = fst $ forInvariant forLoop
-              w  = updatedVars $ forStmt forLoop
-              y  = x : Bind d Set : [] -- : w
-          oldProp <- gets actionProp
-          -- FIXME: enable annot stuff ?
-          -- newProp <- wlp atomicStmt oldProp
-          modify $
-            \VCState{..} ->
-              -- FIXME: enable annot stuff ?
-              -- let newProp' = And [ Atom SetMem (Var p) (Var ps)
-              --                    | (p,ps) <- HM.toList unfoldedProcesses
-              --                    ] :=>: newProp
-              --     atomicPost' = Forall y $ And [atomicPost, newProp']
-              let newProp' = oldProp
-                  atomicPost' = atomicPost
-                  a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost'
-                                                        , ..
-                                                        }
-                             , actionUnfolding = unfoldedProcesses
-                             , actionTypeEnv   = typeEnv
-                             }
-                  -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
-              in VCState{ actionMap = IM.insert atomicLabel a actionMap
-                        , actionProp = newProp'
-                        , ..
-                        }
-        Nothing -> do
-          modify $
-            \VCState{..} ->
-              let a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost
-                                                        , ..
-                                                        }
-                             , actionUnfolding = unfoldedProcesses
-                             , actionTypeEnv   = typeEnv
-                             }
-                  -- a = trace (printf "action[%d] ::: %s" atomicLabel (show unfoldedProcesses)) _a
-              in VCState{ actionMap = IM.insert atomicLabel a actionMap
-                        , ..
-                        }
+      modify $
+        \VCState{..} ->
+          let a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost
+                                                    , ..
+                                                    }
+                         , actionUnfolding = unfoldedProcesses
+                         , actionTypeEnv   = typeEnv
+                         }
+          in VCState{ actionMap = IM.insert atomicLabel a actionMap
+                    , ..
+                    }
 
     go forLoop@(ForEach{..}) = do
-      let x  = bvar forElement
-          xs = bvar forList
-      modify $ \VCState{..} -> VCState{ actionForLoop = Just forLoop
-                                      , actionProp    = snd $ forInvariant
-                                      , ..
-                                      }
-      withElem x xs $ withType (fst forInvariant) Set $
+      withElem x xs $
+        withType (fst forInvariant) Set $
         go forStmt
-      modify $ \VCState{..} -> VCState{ actionForLoop = Nothing
-                                      , actionProp    = TT
-                                      , ..
-                                      }
+
         where
           y = updatedVars forLoop
+          x  = bvar forElement
+          xs = bvar forList
 
     go (Seq {..}) = sequence_ $ go <$> reverse seqStmts
 
-    go (If {..}) = do
-      go thenStmt
-      go elseStmt
+    go (If {..}) = go thenStmt >> go elseStmt
 
     go _ = error $ printf "createActionMap.go called with sth other than expected !"
 
 stmtPC :: Show a => Stmt a -> Int
 stmtPC (Atomic {..}) = atomicLabel
-stmtPC s             = error $ printf "stmtPC called with non-atomic value [[[%s]]] !" (pretty s)
+stmtPC s             = error $ printf "stmtPC called with non-atomic statement [[[%s]]] !" (pretty s)
 
+-- replace here(p) with pc[p] = l, if that occurs inside an atomic block with label l
 replaceHere :: Id -> Stmt a -> Stmt a
 replaceHere ps stmt = go undefined stmt
   where
@@ -848,12 +828,13 @@ insertType v t =
                                 }
                     return True
       Just s -> if s == t
-                then return False 
+                then return False
                 else error "insertType: Trying to update a var with a different type"
     else
     return False
 
-withType :: Id -> Sort -> VCGen a r -> VCGen a r 
+-- run an action with a (v:t) variable-type mapping in the state
+withType :: Id -> Sort -> VCGen a r -> VCGen a r
 withType v t act = do
   c <- insertType v t
   r <- act
@@ -871,6 +852,7 @@ withType v t act = do
                   else error "insertType: Trying to delete a var with a different existing type"
         Nothing -> error "insertType: Trying to delete missing var"
 
+-- check if the id belongs to a symmetric set
 isSet :: Id -> VCGen a Bool
 isSet i = do
   m <- gets unfoldedProcesses
@@ -885,11 +867,13 @@ isIndex :: Sort -> Id -> VCGen a Bool
 isIndex (Map (SetIdx ps) _) p = isElem p ps
 isIndex _ _                   = return False
 
+-- is p \in ps ?
 isElem :: Id -> Id -> VCGen a Bool
 isElem p ps = do
   g <- gets unfoldedProcesses
   return $ maybe False (== ps) $ HM.lookup p g
 
+-- run an action with (p \in ps) stored in the state
 withElem :: Id -> Id -> VCGen a r ->  VCGen a r
 withElem p ps act = withType p Int $ do
   c <- addElem
@@ -909,7 +893,7 @@ withElem p ps act = withType p Int $ do
             put $ VCState { unfoldedProcesses = HM.insert p ps unfoldedProcesses
                           , ..
                           }
-            -- return $ trace msg True
+            -- return $ debug msg True
             return True
           Just ps' ->
             if   ps' == ps
@@ -920,7 +904,7 @@ withElem p ps act = withType p Int $ do
       where
         msg :: String
         msg = printf "adding %s \\in %s" p ps
-    
+
     removeElem :: VCGen a ()
     removeElem = do
       VCState {..} <- get
@@ -929,13 +913,14 @@ withElem p ps act = withType p Int $ do
           let st' = VCState { unfoldedProcesses = HM.delete p unfoldedProcesses
                             , ..
                             }
-          -- put $ trace msg st'
+          -- put $ debug msg st'
           put st'
         _ -> error $ printf "%s does not exist in unfoldedProcesses or typeEnv !!!" p
       where
         msg :: String
         msg = printf "removing %s \\in %s" p ps
 
+-- returns the bindings that might be updated in the given statement
 updatedVars :: Stmt a -> [Binder]
 updatedVars = filter (\(Bind v _) -> v /= "_") . nub . go
   where
@@ -997,8 +982,10 @@ updateTypes tenv s = go s
         Nothing   -> b
         Just sort -> Bind v sort
 
-
+-------------------------------------------------------------------------------
+-- apply some rewriting to simplify the given formula
 simplifyProp :: Prop a -> Prop a
+-------------------------------------------------------------------------------
 simplifyProp (And ps) = if   elem FF ps''
                         then FF
                         else case ps'' of
@@ -1039,7 +1026,7 @@ simplifyProp p0@(Forall bs p) = case p'' of
                                   _  -> Forall bs' p''
   where
     (bs', p'') = case p' of
-                   Forall bs2 p2 -> (nub $ bs ++ bs2, p2) 
+                   Forall bs2 p2 -> (nub $ bs ++ bs2, p2)
                    _             -> (bs, p')
     p' = simplifyProp p
 simplifyProp (Exists bs p)  = Exists bs $ simplifyProp p
@@ -1057,7 +1044,9 @@ simplifyProp (PVar v) = PVar v
 simplifyProp NonDetProp = NonDetProp
 
 
+-------------------------------------------------------------------------------
 simplifyExpr :: Expr a -> Expr a
+-------------------------------------------------------------------------------
 simplifyExpr = go
   where
     go (PExpr p)     = case p' of
@@ -1080,6 +1069,7 @@ simplifyExpr = go
     go NonDetValue   = NonDetValue
     go (Var v)       = Var v
 
+-- append given two statements together
 appendStmt :: Stmt a -> Stmt a -> Stmt a
 appendStmt s1 s2 = Seq { seqStmts = toSS s1 ++ toSS s2
                        , stmtData = stmtData s1
@@ -1087,3 +1077,11 @@ appendStmt s1 s2 = Seq { seqStmts = toSS s1 ++ toSS s2
   where
     toSS (Seq ss _) = ss
     toSS s          = [s]
+
+debug :: String -> a -> a
+-- debug = trace
+debug _ a = a
+
+debugM :: Applicative f => String -> f ()
+-- debugM = traceM
+debugM _ = pure ()

@@ -28,17 +28,14 @@ func runPs(peerAddresses []string, done chan bool) {
 	n.StartSymSet("ps", "p")
 	n.AssignSymSet("qs", "")
 
-	pv := gochai.NewVar()
-	pv.Assign(1)
-
 	pid := gochai.NewVar()
 	pid.Assign(n.MyId())
 
+	pv := gochai.NewVar()
+	pv.Assign(1)
+
 	px := gochai.NewVar()
 	for Q := range n.PeerIds {
-		/*{-@ invariant: forall([decl(i,int)],
-								implies(elem(i,rr), ref(y,i)=1))
-		-@}*/
 		n.SendPair(Q, pid, pv)
 	}
 
@@ -74,5 +71,5 @@ func runQs(peerAddresses []string, done chan bool) {
 }
 
 /*{-@ ensures: 
-	  forall([decl(i,int)], implies(elem(i,qs), ref(y,i)=1))
+	true
 -@}*/

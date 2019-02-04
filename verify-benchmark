@@ -13,12 +13,12 @@ mkdir -p "$TMP_DIR"
 
 typeset -A GO_FILES
 GO_FILES=( \
-	"multi-paxos"      "${GOCHAI_SRC_DIR}/multipaxos/multipaxos.go" \
-	"paxos"            "${GOCHAI_SRC_DIR}/paxos/paxos.go" \
-	"simple-paxos"     "${GOCHAI_SRC_DIR}/simplepaxos/simplepaxos.go" \
-	"raft"             "${GOCHAI_SRC_DIR}/raftcore/raftcore.go" \
 	"two-phase-commit" "${GOCHAI_SRC_DIR}/twopc/twopc.go" \
-	"figa3"            "${GOCHAI_SRC_DIR}/figa3/figa3.go" \
+	"raft"             "${GOCHAI_SRC_DIR}/raftcore/raftcore.go" \
+	"paxos"            "${GOCHAI_SRC_DIR}/paxos/paxos.go" \
+	"multi-paxos"      "${GOCHAI_SRC_DIR}/multipaxos/multipaxos.go" \
+	# "simple-paxos"     "${GOCHAI_SRC_DIR}/simplepaxos/simplepaxos.go" \
+	# "figa3"            "${GOCHAI_SRC_DIR}/figa3/figa3.go" \
 	)
 # }}}
 
