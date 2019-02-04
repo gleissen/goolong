@@ -211,19 +211,15 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 	//    Initialization
 	// =====================
 
-	/*{-@ pre:
-	forall([decl(i,int)],
-		implies(
-			elem(i,r),
-			and([ref(t,i)>0,
-				ref(ready,i)=0,
-				ref(decided,i)=0,
-                ref(ho,i)=0,
-                ref(k,i)=0,
-                ref(l,i)=card(as),
-                ref(m,i)=0
-                ])))
-
+	/*{-@ pre: and([
+					ref(t,P)>0,
+					ref(ready,P)=0,
+					ref(decided,P)=0,
+					ref(ho,P)=0,
+					ref(k,P) = 0,
+					ref(l,P) = card(as),
+					ref(m,P) = 0
+				])
 	 -@}*/
 
 	t.Assign(int32(*ballot))
@@ -233,11 +229,15 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 	ready.Assign(0)
 	decided.Assign(0)
 	inst.Assign(instance)
-	/*{-@ assume: and([ref(t,P)>0,
-                       ref(m,P)=0,
-                       ref(l,P)=card(as),
-                       ref(k,P)=0])
-	 -@}*/
+	/*{-@ assume: forall([decl(i,int)],
+										and([
+											ref(t,i) > 0,
+											ref(m,i)=0,
+											ref(l,i) = card(as),
+											ref(k,i) = 0
+										])
+							)
+	-@}*/
 
 	// =====================
 	//    Proposal phase
@@ -246,43 +246,21 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 	for Peer := range n.PeerIds {
 		// Precondition
 
-		/*{-@ pre:
-        and([
-             ref(k,P)+ref(l,P)+ref(m,P)=card(as),
-             ref(k,P)=0,
-             ref(decided,P)=0,
-             ref(ready,P)=0
-            ])
+		/*{-@pre: forall([decl(i,int)],
+						implies(
+									and([
+												elem(i,ps),
+												here(i)
+									 		]),
+									and([
+									 			ref(ready, i)=0,
+												ref(decided, i)=0,
+												ref(k,i)=0,
+												ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+											])
+										)
+									)
 		-@}*/
-
-		/*{-@ pre:
-        implies(ref(decided,P)=1,
-                and([ref(k,P)>card(as)/2,
-                     ref(ho,P)>card(as)/2,
-                     ref(ready,P)=1
-                    ])
-               )
-		-@}*/
-
-		/*{-@ pre:
-        forall([decl(i,int),decl(j,int)],
-               implies(and([elem(i,ps),
-                            elem(j,as),
-                            ref(l,i)>card(as)/2,
-                            ref(k,i)=0]),
-                       ref(ref(wT,j), ref(inst,i)) < ref(t,i)))
-		-@}*/
-
-		/*{-@ pre:
-        forall([decl(qa,int), decl(qp,int)],
-               implies(and([elem(qa,as),
-                            elem(qp,ps),
-                            ref(ready,qp)=1,
-                            ref(t,qp) =< ref(ref(wT,qa), ref(inst, qp)),
-                            ref(k,qp)+ref(l,qp)>card(as)/2]),
-                       ref(ref(w,qa), ref(inst, qp)) = ref(x,qp)))
-		-@}*/
-
 		id.Assign(uint8(n.MyId()))
 		// propose myTerm
 		dlog.Printf("prop: sending proposal %v for instance %v to %v\n", t.Get(), inst.Get(), Peer)
@@ -309,108 +287,125 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 		//  Acceptance phase
 		// =====================
 
-		/*{-@ pre:
-        implies(ref(decided,P)=0,
-                and([ref(k,P)>card(as)/2,
-                     ref(ho,P)>card(as)/2,
-                     ref(ready,P)=1
-                    ]))
-
+		/*{-@pre: forall([decl(i,int)],
+				implies(
+							and([
+								elem(i,ps),
+								ref(decided,i)=1
+							]),
+		          and([ ref(k,i) > card(as)/2,
+		                ref(ho,i) > card(as)/2,
+		                ref(ready,i)=1
+		             ])
+							)
+				)
 		-@}*/
 
-		/*{-@ pre:
-        and([ref(decided,P)=0,
-             ref(ready,P)=1,
-             ref(k,P)=0,
-             ref(ho,P)=<ref(k,P),
-             ref(k,P)+ref(l,P)+ref(m,P)=card(as)
-		    ])
-		-@}*/
-
-		/*{-@ pre:
-        forall([decl(i,int),decl(j,int)],
-               implies(and([elem(i,ps),
-                            elem(j,as),
-                            ref(l,i)>card(as)/2,
-                            ref(k,i)=0]),
-                       ref(ref(wT,j), ref(inst,i)) < ref(t,i)))
-		-@}*/
-
-		/*{-@ pre:
-        forall([decl(qa,int), decl(qp,int)],
-               implies(and([elem(qa,as),
-                            elem(qp,ps),
-                            ref(ready,qp)=1,
-                            ref(t,qp) =< ref(ref(wT,qa), ref(inst, qp)),
-                            ref(k,qp)+ref(l,qp)>card(as)/2]),
-                       ref(ref(w,qa), ref(inst, qp)) = ref(x,qp)))
-		-@}*/
+		/*{-@pre: forall([decl(i,int)],
+							implies(
+									and([
+										elem(i,ps),
+										here(i)
+										]),
+		             and([
+								 		ref(decided,i)=0,
+		                ref(k,i)=0,
+		                ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+		                ])
+								)
+					)
+				-@}*/
 		ho.Assign(0)
 		ready.Assign(1)
 
 		for Peer := range n.PeerIds {
-            /*{-@ pre: and([ref(ready,P)=1,
-                        ref(decided,P)=0,
-                        ref(ho,P)=<ref(k,P),
-                        ref(k,P)+ref(l,P)+ref(m,P)=card(as)
-                       ])
+
+			/*{-@pre: forall([decl(i,int)],
+			              	implies(
+														and([
+															elem(i,ps),
+															here(i)
+														]),
+			                      and([
+															ref(ready,i)=1,
+			                        ref(decided,i)=0,
+			                        ref(ho,i) =< ref(k,i),
+			                        ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+			                      ])
+											   )
+			              )
+					-@}*/
+
+			/*{-@pre: forall([decl(i,int), decl(j,int)],
+			                          implies(
+																	and([
+																		elem(i,ps),
+																		elem(j,as),
+																		ref(l,i) > card(as)/2,
+																		ref(k,i)=0
+																	]),
+			                            ref(ref(wT,j),ref(inst,i)) < ref(t,i)
+																)
+													)
 			-@}*/
 
-            /*{-@ pre: implies(ref(decided,P)=1,
-                           and([ref(k,P)>card(as)/2,
-                                ref(ho,P)>card(as)/2,
-                                ref(ready,P)=1
-                               ])
-                          )
+			/*{-@pre: forall([decl(qa,int), decl(qp,int)],
+			                          implies(
+																	and([
+																		elem(qa,as),
+																		elem(qp,ps),
+																		ref(ready,qp)=1,
+																		ref(t,qp) =< ref(ref(wT,qa),ref(inst,qp)),
+																		ref(k,qp)+ref(l,qp) > card(as)/2
+																		]),
+			                             ref(ref(w,qa),ref(inst,qp))=ref(x,qp)
+																	 )
+												)
 			-@}*/
 
-			/*{-@ pre:
-			forall([decl(i,int),decl(j,int)],
-				implies(and([elem(i,ps),
-								elem(j,as),
-								ref(l,i)>card(as)/2,
-								ref(k,i)=0]),
-						ref(ref(wT,j), ref(inst,i)) < ref(t,i)))
+			//{-@ assume: forall([decl(i,int)], implies(ref(t,i)=ref(t,P), i=P)) -@}
+
+			/*{-@assume: forall([decl(i,int)],
+					implies(
+						and([
+									elem(i,ps),
+									ref(l,i) > card(as)/2
+							]),
+							or([
+									ref(ready,P)=0,
+									ref(t,P) < ref(t,i)
+								])
+							)
+				)
 			-@}*/
 
-			/*{-@ pre:
-			forall([decl(qa,int), decl(qp,int)],
-				implies(and([elem(qa,as),
-								elem(qp,ps),
-								ref(ready,qp)=1,
-								ref(t,qp) =< ref(ref(wT,qa), ref(inst, qp)),
-								ref(k,qp)+ref(l,qp)>card(as)/2]),
-						ref(ref(w,qa), ref(inst, qp)) = ref(x,qp)))
+			//{-@declare: decl(a0, int) -@}
+
+			//{-@assume: elem(a0, as) -@}
+
+			/*{-@assume: implies(
+											and([0 < ref(xT,P)]),
+											and([
+														ref(x,P) = ref(ref(w,a0),ref(inst,P)),
+														ref(xT,P) = ref(ref(wT,a0), ref(inst,P))
+											])
+										)
 			-@}*/
 
-            /*{-@ assume: forall([decl(i,int)],
-                            implies(ref(t,i)=ref(t,P),
-                                    i=P))
-			-@}*/
-
-			// {-@ declare: decl(a0, int) -@}
-
-			// {-@ assume: elem(a0,as) -@}
-
-            /*{-@ assume: forall([decl(i,int)],
-                            implies(and([elem(i,ps),
-                                         ref(l,i)>card(as)/2]),
-                                    or([ref(ready,P)=0,
-                                        ref(t,P)<ref(t,i)])))
-			-@}*/
-
-            /*{-@ assume: implies(and([0<ref(xT,P)]),
-                             and([ref(x,P)  = ref(ref(w,a0), ref(inst,P)),
-                                  ref(xT,P) = ref(ref(wT,a0), ref(inst,P))]))
-			-@}*/
-
-            /*{-@ assume: forall([decl(i,int)],
-                            implies(and([elem(i,ps),
-                                         ref(ready,i)=1,
-                                         ref(k,i)+ref(l,i)>card(as)/2,
-                                         ref(ready,P)=1]),
-                                    and([ref(t,i)=<ref(xT,P),
-                                         0<ref(xT,P)])))
+			/*{-@assume: forall([decl(i,int)],
+														implies(
+																and([
+																	elem(i,ps),
+																	ref(ready,i)=1,
+																	ref(k,i)+ref(l,i) > card(as)/2,
+																	ref(ready,P)=1
+																]),
+																and([
+																	ref(t,i) =< ref(xT,P),
+																	0 < ref(xT,P)
+																])
+														)
+											)
 			-@}*/
 
 			n.SendAccept(Peer, id, t, x, inst, batch)
@@ -430,47 +425,23 @@ func runProposer(n *multiproto.MultiNode, ballot *int32, batch *multiproto.Batch
 		}
 		if 2*int(ho.Get()) > n.NumPeers() {
 
-            /*{-@pre: and([ref(ready,P)=1,
-                        ref(decided,P)=1,
-                        ref(ho,P)=<ref(k,P),
-                        ref(k,P)+ref(l,P)+ref(m,P)=card(as)
-					   ])
-			-@}*/
-
-			/*{-@ pre:
-			forall([decl(i,int),decl(j,int)],
-				implies(and([elem(i,ps),
-								elem(j,as),
-								ref(l,i)>card(as)/2,
-								ref(k,i)=0]),
-						ref(ref(wT,j), ref(inst,i)) < ref(t,i)))
-			-@}*/
-
-			/*{-@ pre:
-			forall([decl(qa,int), decl(qp,int)],
-				implies(and([elem(qa,as),
-								elem(qp,ps),
-								ref(ready,qp)=1,
-								ref(t,qp) =< ref(ref(wT,qa), ref(inst, qp)),
-								ref(k,qp)+ref(l,qp)>card(as)/2]),
-						ref(ref(w,qa), ref(inst, qp)) = ref(x,qp)))
-			-@}*/
-
-            /*{-@pre: implies(ref(decided,P)=1,
-                           and([ref(k,P)>card(as)/2,
-                                ref(ho,P)>card(as)/2,
-                                ref(ready,P)=1
-                               ])
+			/*{-@pre: forall([decl(i,int),decl(j,int)],
+						   and([
+						   implies(
+							   and([elem(i,ps),here(i)]),
+							   and([
+								ref(ready,i)=1,
+								ref(ho,i) =< ref(k,i),
+								ref(k,i) + ref(l,i) + ref(m,i) = card(as)
+							       ])
+							  )
+						      ])
 						  )
 			-@}*/
 			decided.Assign(1)
 			dlog.Printf("prop: value %v for ballot %v accepted.\n", x.Get(), t.Get())
-		} else {
-  	         /*{-@pre: ref(decided,P)=0 -@}*/
-			dlog.Printf("prop: proposal failed.\n")
 		}
 	} else {
-		/*{-@pre: ref(decided,P)=0 -@}*/
 		dlog.Printf("prop: proposal failed.\n")
 	}
 	//--end
@@ -487,18 +458,9 @@ func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 	n.StartSymSet("as", "a")
 	n.AssignSymSet("ps", "")
 
-	/*{-@pre: 
-	forall([decl(i,int),decl(j,int)], 
-		implies(
-			elem(j,r),
-			ref(ref(wT,j),i) = 0)) 
-	-@}*/
+	/*{-@pre: forall([decl(i,int),decl(j,int)], ref(ref(wT,j),i) = 0) -@}*/
 
-	/*{-@assume:
-	forall([decl(i,int),decl(j,int)], 
-		ref(ref(wT,j),i) = 0
-		)
-	-@}*/
+	/*{-@assume: forall([decl(i,int),decl(j,int)], ref(ref(wT,j),i) = 0) -@}*/
 
 	// Declarations
 	max := gochai.NewMap()

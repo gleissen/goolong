@@ -24,7 +24,7 @@ import           System.Process
 import           Text.Printf
 
 import Language.IceT.Pretty
--- import Debug.Trace
+import Debug.Trace
 
 
 
@@ -1079,9 +1079,9 @@ appendStmt s1 s2 = Seq { seqStmts = toSS s1 ++ toSS s2
     toSS s          = [s]
 
 debug :: String -> a -> a
--- debug = trace
-debug _ a = a
+debug = trace
+-- debug _ a = a
 
 debugM :: Applicative f => String -> f ()
--- debugM = traceM
-debugM _ = pure ()
+debugM = traceM
+-- debugM _ = pure ()
