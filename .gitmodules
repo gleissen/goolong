@@ -1,3 +1,0 @@
-[submodule "vcgen/liquid-fixpoint"]
-	path = vcgen/liquid-fixpoint
-	url = https://github.com/ucsd-progsys/liquid-fixpoint.git

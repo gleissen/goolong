@@ -6,12 +6,6 @@ build_brisk() {
 	make -C $THIS_DIR/brisk-sequentialize
 }
 
-build_briskly() {
-	pushd $THIS_DIR/Brisk-VCGen
-	stack build
-	popd
-}
-
 build_vcgen() {
 	pushd $THIS_DIR/vcgen
 	stack build
@@ -22,4 +16,4 @@ build_benchmarks() {
 	make -C $THIS_DIR
 }
 
-build_brisk && build_briskly && build_vcgen && build_benchmarks
+build_brisk && build_vcgen && build_benchmarks
