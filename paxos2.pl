@@ -31,10 +31,7 @@ prog(tmp,
 
      ensures
     (
-      forall([decl(i,int)],
-             implies(elem(i,ps),
-                     and([true
-                         ])))
+      true
     ),
 
      seq([
@@ -137,7 +134,9 @@ prog(tmp,
                                           )),
                             pre(A,
                                 and([ref(decided,A)=0,
+                                     ref(ready,A)=1,
                                      ref(k,A)=0,
+                                     ref(ho,A)=<ref(k,A),
                                      ref(k,A)+ref(l,A)+ref(m,A)=card(as)
                                     ])),
                             pre(A,forall([decl(i,int),decl(j,int)],
@@ -227,8 +226,31 @@ prog(tmp,
                                                           assign(A,l,ref(l,A)-1)]),
                                                      skip)
                                                 ]))
-                                    ]))
+                                    ])),
+                            ite(A,2*ref(ho,A)>card(as),
+                                seq([
+                                     pre(A, and([ref(ready,A)=1,
+                                                 ref(decided,A)=1,
+                                                 ref(ho,A)=<ref(k,A),
+                                                 ref(k,A)+ref(l,A)+ref(m,A)=card(as)
+                                                ])),
+                                     pre(A,forall([decl(qa,int), decl(qp,int)],
+                                                  implies(and([elem(qa,as),
+                                                               elem(qp,ps),
+                                                               ref(ready,qp)=1,
+                                                               ref(t,qp)=<ref(wT,qa),
+                                                               ref(k,qp)+ref(l,qp)>card(as)/2]),
+                                                          ref(w,qa)=ref(x,qp)))),
+                                     pre(A,forall([decl(i,int),decl(j,int)],
+                                                  implies(and([elem(i,ps),
+                                                               elem(j,as),
+                                                               ref(l,i)>card(as)/2,
+                                                               ref(k,i)=0]),
+                                                          ref(wT,j)<ref(t,i)))),
 
+                                     assign(A,decided,1)
+                                    ]),
+                                skip)
 
                            ]),
                        skip
