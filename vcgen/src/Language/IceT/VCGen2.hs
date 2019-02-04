@@ -45,7 +45,6 @@ data VCState a = VCState { freshCounter       :: Int              -- used to cre
 
                          -- atomic action related stuff
                          , actionMap          :: ActionMap a    -- map from action labels to actions
-                         , actionStatePath    :: ActionPath a   -- path conditions of the actions
                          , actionForLoop      :: Maybe (Stmt a) -- used to check whether in for loop or not
                          , actionProp         :: Prop a         -- used for integrating loop invariants actions
                          }
@@ -82,7 +81,6 @@ writeSMT (Program{..}) = do
                            , unfoldedProcesses  = HM.empty
                            , parallelProcesses  = HS.empty
                            , actionMap          = IM.empty
-                           , actionStatePath    = []
                            , actionProp         = TT
                            , actionForLoop      = Nothing
                            }
@@ -288,13 +286,11 @@ wlp (Par {..}) q = do
                            , (pp,_) <- HM.toList $ actionUnfolding la
                            ]
     let invStep = Forall (Bind p0 Int : y ++ [ Bind pp Int | pp <- HS.toList idxs]) $
-                  Atom SetMem varP0 varPs
-                  :=>:
-                  And [ And ([ i
-                             , cf l
-                             , Atom SetMem varP0 varPs
-                             , Atom SetMem varP  varPs
-                             ] ++ actionPath la)  :=>: w
+                  And [ And [ i
+                            , cf l
+                            , Atom SetMem varP0 varPs
+                            , Atom SetMem varP  varPs
+                            ] :=>: w
                       | (l, la, w) <- conjunts
                       ]
     return $ And [ invInit
@@ -349,7 +345,6 @@ wlp (While {..}) q = undefined
 -------------------------------------------------------------------------------
 
 data Action a = Action { actionStmt        :: Stmt a        -- this is the atomic action
-                       , actionPath        :: ActionPath a  -- path condition (i.e. if stmt conditions)
                        , actionUnfolding   :: HM.HashMap Id Id
                        , actionTypeEnv     :: TypeEnv
                        }
@@ -405,8 +400,8 @@ atomize = go
                        , ..
                        }
     go (If {..}) = do
-      t' <- go thenStmt
-      e' <- go elseStmt
+      t' <- go $ appendStmt (Assume ifCondition stmtData) thenStmt
+      e' <- go $ appendStmt (Assume (Not ifCondition) stmtData) elseStmt
       return $ If { thenStmt = t'
                   , elseStmt = e'
                   , ..
@@ -587,10 +582,9 @@ atomicMerge stmts = case go stmts of
 extractCFG :: (Show a, VCAnnot a) => Id -> Stmt a -> VCGen a (ActionResult a)
 --------------------------------------------------------------------------------
 extractCFG ps stmt = do
-  atomizedStmt0 <- atomize stmt
+  atomizedStmt <- replaceHere ps <$> atomize stmt
   pcExit <- incrCounter
-  let atomizedStmt = replaceHere ps atomizedStmt0
-      g = G.mkUGraph nodes edges :: CFG
+  let g = G.mkUGraph nodes edges :: CFG
       nodes = IS.toList $
               foldl' (\s (n1,n2) -> IS.insert n1 (IS.insert n2 s)) IS.empty edges
       edges = go atomizedStmt ++
@@ -672,7 +666,6 @@ createActionMap rootStmt = do
     cleanup :: VCAnnot a => VCGen a ()
     cleanup = modify $
       \VCState {..} -> VCState { actionMap       = IM.empty
-                               , actionStatePath = []
                                , actionForLoop   = Nothing
                                , actionProp      = TT
                                , ..
@@ -703,7 +696,6 @@ createActionMap rootStmt = do
                   a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost'
                                                         , ..
                                                         }
-                             , actionPath      = actionStatePath
                              , actionUnfolding = unfoldedProcesses
                              , actionTypeEnv   = typeEnv
                              }
@@ -718,7 +710,6 @@ createActionMap rootStmt = do
               let a = Action { actionStmt      = Atomic { atomicPost = simplifyProp atomicPost
                                                         , ..
                                                         }
-                             , actionPath      = actionStatePath
                              , actionUnfolding = unfoldedProcesses
                              , actionTypeEnv   = typeEnv
                              }
@@ -746,53 +737,10 @@ createActionMap rootStmt = do
     go (Seq {..}) = sequence_ $ go <$> reverse seqStmts
 
     go (If {..}) = do
-      oldPath <- gets actionStatePath
-      modify $ \VCState{..} -> VCState{ actionStatePath = ifCondition : oldPath , .. }
       go thenStmt
-      modify $ \VCState{..} -> VCState{ actionStatePath = (Not ifCondition) : oldPath , .. }
       go elseStmt
-      modify $ \VCState{..} -> VCState{ actionStatePath = oldPath , .. }
 
     go _ = error $ printf "createActionMap.go called with sth other than expected !"
-
--- merge stmt sequences
--- e.g. : (s1;s2);(s3;s4) becomes (s1;s2;s3;s4)
-flattenSeq :: Stmt a -> Stmt a
-flattenSeq s = case go s of
-                 []   -> error "flattenSeq returned empty list"
-                 [s'] -> s'
-                 ss   -> Seq { seqStmts = ss
-                             , stmtData = stmtData s
-                             }
-  where
-    go :: Stmt a -> [Stmt a]
-    go (Skip    {..}) = Skip {..} : []
-    go (Assign  {..}) = Assign {..} : []
-    go (Assume  {..}) = Assume {..} : []
-    go (Assert  {..}) = Assert {..} : []
-    go (Seq     {..}) = go =<< seqStmts
-    go (Par     {..}) = Par { parStmt = flattenSeq parStmt
-                            , ..
-                            } : []
-    go (Atomic  {..}) = Atomic { atomicStmt = flattenSeq atomicStmt
-                               , ..
-                               } : []
-    go (If      {..}) = If { thenStmt = flattenSeq thenStmt
-                           , elseStmt = flattenSeq elseStmt
-                           , ..
-                           } : []
-    go (Cases   {..}) = Cases { caseList = (\Case{..} -> Case { caseStmt = flattenSeq caseStmt
-                                                              , ..
-                                                              }
-                                           ) <$> caseList
-                              , ..
-                              } : []
-    go (ForEach {..}) = ForEach { forStmt = flattenSeq forStmt
-                                , ..
-                                } : []
-    go (While   {..}) = While { whileStmt = flattenSeq whileStmt
-                              , ..
-                              } : []
 
 stmtPC :: Show a => Stmt a -> Int
 stmtPC (Atomic {..}) = atomicLabel
@@ -1131,3 +1079,11 @@ simplifyExpr = go
     go EmptySet      = EmptySet
     go NonDetValue   = NonDetValue
     go (Var v)       = Var v
+
+appendStmt :: Stmt a -> Stmt a -> Stmt a
+appendStmt s1 s2 = Seq { seqStmts = toSS s1 ++ toSS s2
+                       , stmtData = stmtData s1
+                       }
+  where
+    toSS (Seq ss _) = ss
+    toSS s          = [s]

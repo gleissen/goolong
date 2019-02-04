@@ -31,7 +31,19 @@ prog(tmp,
 
      ensures
     (
-      true
+      forall([decl(a0,int),decl(p1,int),decl(p2,int)],
+             implies(and([elem(a0,as),
+                          elem(p1,ps),
+                          elem(p2,ps),
+                          ref(decided,p1)=1,
+                          ref(decided,p2)=1,
+                          implies(and([ref(k,p1)>card(as)/2,
+                                       ref(k,p2)>card(as)/2]),
+                                  and([ref(t,p1)=<ref(wT,a0),
+                                       ref(t,p2)=<ref(wT,a0)])),
+                          0=<ref(l,p1),
+                          0=<ref(l,p2)]),
+                     ref(x,p1)=ref(x,p2)))
     ),
 
      seq([
@@ -81,6 +93,12 @@ prog(tmp,
                                                  ref(ready,A)=0
                                                 ])
                                            ),
+                                        pre(A, implies(ref(decided,A)=1,
+                                                       and([ref(k,A)>card(as)/2,
+                                                            ref(ho,A)>card(as)/2,
+                                                            ref(ready,A)=1
+                                                           ])
+                                                      )),
                                         pre(A,forall([decl(i,int),decl(j,int)],
                                                      implies(and([elem(i,ps),
                                                                   elem(j,as),
@@ -139,6 +157,7 @@ prog(tmp,
                                      ref(ho,A)=<ref(k,A),
                                      ref(k,A)+ref(l,A)+ref(m,A)=card(as)
                                     ])),
+
                             pre(A,forall([decl(i,int),decl(j,int)],
                                          implies(and([elem(i,ps),
                                                       elem(j,as),
@@ -163,6 +182,12 @@ prog(tmp,
                                                              ref(ho,A)=<ref(k,A),
                                                              ref(k,A)+ref(l,A)+ref(m,A)=card(as)
                                                             ])),
+                                                 pre(A, implies(ref(decided,A)=1,
+                                                                and([ref(k,A)>card(as)/2,
+                                                                     ref(ho,A)>card(as)/2,
+                                                                     ref(ready,A)=1
+                                                                    ])
+                                                               )),
                                                  pre(A,forall([decl(qa,int), decl(qp,int)],
                                                               implies(and([elem(qa,as),
                                                                            elem(qp,ps),
@@ -247,13 +272,24 @@ prog(tmp,
                                                                ref(l,i)>card(as)/2,
                                                                ref(k,i)=0]),
                                                           ref(wT,j)<ref(t,i)))),
-
+                                     pre(A, implies(ref(decided,A)=1,
+                                                    and([ref(k,A)>card(as)/2,
+                                                         ref(ho,A)>card(as)/2,
+                                                         ref(ready,A)=1
+                                                        ])
+                                                   )),
                                      assign(A,decided,1)
-                                    ]),
-                                skip)
+                                    ])
+                               ,
+                                seq([
+                                     pre(A, ref(decided,A)=0)
+                                    ])
+                               )
 
                            ]),
-                       skip
+                       seq([
+                            pre(A, ref(decided,A)=0)
+                           ])
                       )
                    
                   ]))

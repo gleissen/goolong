@@ -31,12 +31,15 @@ func runPs(peerAddresses []string, done chan bool) {
 	pv := gochai.NewVar()
 	pv.Assign(1)
 
+	pid := gochai.NewVar()
+	pid.Assign(n.MyId())
+
 	px := gochai.NewVar()
 	for Q := range n.PeerIds {
 		/*{-@ invariant: forall([decl(i,int)],
 								implies(elem(i,rr), ref(y,i)=1))
 		-@}*/
-		n.SendPair(Q, n.MyId(), pv)
+		n.SendPair(Q, pid, pv)
 	}
 
 	for _ = range n.PeerIds {
