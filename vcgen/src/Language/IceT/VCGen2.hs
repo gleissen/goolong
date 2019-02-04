@@ -114,6 +114,7 @@ wlp (Skip {..}) q = return q
 
 wlp (Assign {assignExpr = NonDetValue, ..}) q = do
   v' <- freshBinder assignVar -- create a fresh variable to replace the expression
+  insertType (bvar v') (bsort v')
   wlp (Assign { assignExpr = Var (bvar v'), ..}) q
 
 -- p.v <- p'.e where v has type t
