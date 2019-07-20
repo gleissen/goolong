@@ -492,6 +492,7 @@ func runAcceptor(peerAddresses []string, n *multiproto.MultiNode) {
 			if pt.Get() >= max.GetKey(pInst) {
 				wT.Put(pInst.Get(), pt.Get())
 				w.Put(pInst.Get(), px.Get())
+				max.Assign(pInst.Get(), pt.Get())
 				success.Assign(1)
 				logMutex.Lock()
 				Log[pInst.Get()] = &Instance{commands, ACCEPTED}

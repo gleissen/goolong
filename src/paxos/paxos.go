@@ -363,6 +363,7 @@ func runAcceptor(peerAddresses []string) {
 			if pt.Get() >= max.Get() {
 				wT.Assign(pt.Get())
 				w.Assign(px.Get())
+				max.Assign(pt.Get())
 				success.Assign(1)
 				fmt.Printf("acc: accepted value %v for ballot %v \n", w.Get(), wT.Get())
 			}
