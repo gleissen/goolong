@@ -140,9 +140,9 @@ func main() {
 		decided := runProposer(propNode, &ballot, batch, propNode.CrtInstance)
 		if decided {
 			ok = 1
+			propNode.BroadcastCommit(ballot, propNode.CrtInstance)
 		}
 		propNode.ReplyPropose(ok, batch)
-		propNode.BroadcastCommit(ballot, propNode.CrtInstance)
 		propNode.CrtInstance++
 	}
 }
